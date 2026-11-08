@@ -119,7 +119,31 @@ class MainActivity : Activity() {
             .processNameSuffix("m2t")
             .debuggable(false)
             .version(1)
-        Shizuku.bindUserService(args, connection)
+        try {
+            Shizuku.bindUserService(args, connection)
+        } catch (e: Throwable) {
+            output.text = "bindUserService HATA:\n$e\n\n" + diag()
+            setStatus("Baglanma hatasi (asagiya bakin).")
+            return
+        }
+        // 10 sn icinde baglanmazsa tanilama yaz
+        status.postDelayed({
+            if (service == null) {
+                output.text = "10 sn icinde baglanamadi.\n\n" + diag()
+                setStatus("Hizmet baglanamadi (asagiya bakin).")
+            }
+        }, 10_000)
+    }
+
+    private fun diag(): String {
+        val sb = StringBuilder()
+        try { sb.append("pingBinder: ${Shizuku.pingBinder()}\n") } catch (e: Throwable) { sb.append("pingBinder hata: $e\n") }
+        try { sb.append("Shizuku surum: ${Shizuku.getVersion()}\n") } catch (e: Throwable) { sb.append("getVersion hata: $e\n") }
+        try { sb.append("Shizuku uid: ${Shizuku.getUid()}\n") } catch (e: Throwable) { sb.append("getUid hata: $e\n") }
+        try { sb.append("Izin: ${Shizuku.checkSelfPermission()}\n") } catch (e: Throwable) { sb.append("izin hata: $e\n") }
+        sb.append("Android: ${android.os.Build.VERSION.SDK_INT}\n")
+        sb.append("Paket: $packageName\n")
+        return sb.toString()
     }
 
     private fun runTest() {
