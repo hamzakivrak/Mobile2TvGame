@@ -20,12 +20,16 @@ class MainActivity : Activity() {
     private lateinit var versionEdit: EditText
     private lateinit var displayEdit: EditText
     private lateinit var appEdit: EditText
-    private lateinit var runBtn: Button
+    private lateinit var startBtn: Button
+    private lateinit var scroll: ScrollView
+
+    @Volatile
+    private var proc: Process? = null
 
     private val permListener = Shizuku.OnRequestPermissionResultListener { _, result ->
         runOnUiThread {
             setStatus(
-                if (result == PackageManager.PERMISSION_GRANTED) "Shizuku izni verildi. Testi baslatabilirsiniz."
+                if (result == PackageManager.PERMISSION_GRANTED) "Shizuku izni verildi."
                 else "Shizuku izni reddedildi."
             )
         }
@@ -38,7 +42,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad * 2, pad, pad)
         }
-        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.4)" }
+        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.5)" }
         root.addView(status)
 
         versionEdit = field(root, "scrcpy-server surumu", "5.0.1")
@@ -49,16 +53,20 @@ class MainActivity : Activity() {
         permBtn.setOnClickListener { checkShizuku() }
         root.addView(permBtn)
 
-        runBtn = Button(this).apply { text = "2) Testi baslat (~15 sn)" }
-        runBtn.setOnClickListener { runTest() }
-        root.addView(runBtn)
+        startBtn = Button(this).apply { text = "2) Yayini baslat (TV bekler)" }
+        startBtn.setOnClickListener { startStream() }
+        root.addView(startBtn)
+
+        val stopBtn = Button(this).apply { text = "3) Durdur" }
+        stopBtn.setOnClickListener { stopStream() }
+        root.addView(stopBtn)
 
         output = TextView(this).apply {
             textSize = 12f
             typeface = android.graphics.Typeface.MONOSPACE
             setTextIsSelectable(true)
         }
-        val scroll = ScrollView(this)
+        scroll = ScrollView(this)
         scroll.addView(output)
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
@@ -92,24 +100,35 @@ class MainActivity : Activity() {
             return
         }
         if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-            setStatus("Shizuku hazir (izin var). Testi baslatabilirsiniz.")
+            setStatus("Shizuku hazir (izin var).")
         } else {
             setStatus("Shizuku izni isteniyor...")
             Shizuku.requestPermission(100)
         }
     }
 
-    private fun runTest() {
+    private fun stopStream() {
+        try { proc?.destroy() } catch (_: Throwable) {}
+        proc = null
+        setStatus("Durduruldu.")
+        startBtn.isEnabled = true
+    }
+
+    private fun startStream() {
         if (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
             setStatus("Once 1) dugmesiyle Shizuku iznini alin.")
+            return
+        }
+        if (proc != null) {
+            setStatus("Yayin zaten calisiyor. Once Durdur'a basin.")
             return
         }
         val apk = applicationInfo.sourceDir
         val v = versionEdit.text.toString().trim()
         val d = displayEdit.text.toString().trim()
         val a = appEdit.text.toString().trim()
-        runBtn.isEnabled = false
-        setStatus("Test calisiyor, bekleyin...")
+        startBtn.isEnabled = false
+        setStatus("Yayin hazirlaniyor. TV uygulamasini acin.")
         output.text = ""
         thread {
             try {
@@ -119,23 +138,29 @@ class MainActivity : Activity() {
                     Array<String>::class.java, Array<String>::class.java, String::class.java
                 )
                 m.isAccessible = true
-                val sh = "CLASSPATH='$apk' /system/bin/app_process / com.hk.mobile2tvgame.RelayMain " +
-                        "'$apk' '$v' '$a' '$d' 2>&1"
-                val proc = m.invoke(null, arrayOf("sh", "-c", sh), null, null) as Process
-                proc.inputStream.bufferedReader().forEachLine { line ->
-                    runOnUiThread { output.append(line + "\n") }
+                val sh = "export CLASSPATH='$apk'; exec /system/bin/app_process / " +
+                        "com.hk.mobile2tvgame.RelayMain '$apk' '$v' '$a' '$d' 27183 2>&1"
+                val p = m.invoke(null, arrayOf("sh", "-c", sh), null, null) as Process
+                proc = p
+                p.inputStream.bufferedReader().forEachLine { line ->
+                    runOnUiThread {
+                        output.append(line + "\n")
+                        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+                    }
                 }
                 runOnUiThread {
-                    output.append("\n(surec kodu: ${try { proc.waitFor() } catch (e: Exception) { e.toString() }})\n")
-                    setStatus("Test bitti.")
-                    runBtn.isEnabled = true
+                    output.append("\n(surec bitti)\n")
+                    setStatus("Yayin bitti.")
+                    startBtn.isEnabled = true
+                    proc = null
                 }
             } catch (e: Throwable) {
                 runOnUiThread {
                     output.append("HATA: $e\n")
                     (e.cause)?.let { output.append("Neden: $it\n") }
                     setStatus("Hata (asagiya bakin).")
-                    runBtn.isEnabled = true
+                    startBtn.isEnabled = true
+                    proc = null
                 }
             }
         }

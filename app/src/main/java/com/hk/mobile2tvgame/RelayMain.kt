@@ -4,36 +4,90 @@ import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import java.io.File
 import java.io.IOException
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
 import java.util.zip.ZipFile
 import kotlin.concurrent.thread
 import kotlin.random.Random
 
 /**
- * Shizuku uzerinden "shell" yetkisiyle, app_process ile dogrudan baslatilir
- * (Shizuku UserService mekanizmasi kullanilmaz).
- * Sonuclari standart ciktiya yazar; uygulama bunu okuyup ekrana basar.
+ * Shizuku uzerinden "shell" yetkisiyle app_process ile baslatilir.
  *
- * args: apkYolu surum baslatilacakUygulama ekran
+ * Akis:
+ *  1. TCP portunu dinler, UDP duyurusu yapar (TV uygulamasi telefonu boylece bulur)
+ *  2. TV baglaninca scrcpy-server'i sanal ekran modunda baslatir
+ *  3. Uygulamayi/oyunu sanal ekranda acar
+ *  4. scrcpy akisini (ham) TV'ye aynen iletir
+ *
+ * args: apkYolu surum baslatilacakPaket ekran tcpPort
  */
 object RelayMain {
 
+    private const val BEACON_PORT = 27184
+
     @Volatile
     private var displayId = -1
+
+    @Volatile
+    private var serverProc: Process? = null
+
+    @Volatile
+    private var beacon = true
 
     private fun p(s: String) {
         println(s)
         System.out.flush()
     }
 
+    private fun startBeacon(port: Int) {
+        thread(isDaemon = true) {
+            val msg = "M2T1:$port".toByteArray()
+            val s = DatagramSocket()
+            s.broadcast = true
+            while (beacon) {
+                try {
+                    val ifs = NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+                    for (ni in ifs) {
+                        if (!ni.isUp || ni.isLoopback) continue
+                        for (ia in ni.interfaceAddresses) {
+                            val b = ia.broadcast ?: continue
+                            s.send(DatagramPacket(msg, msg.size, b, BEACON_PORT))
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+                try { Thread.sleep(1000) } catch (_: InterruptedException) {}
+            }
+            s.close()
+        }
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
-        var proc: Process? = null
+        Runtime.getRuntime().addShutdownHook(Thread {
+            try { serverProc?.destroy() } catch (_: Throwable) {}
+        })
         var sock: LocalSocket? = null
         try {
             val apk = args[0]
             val version = args[1]
             val startApp = args[2]
             val display = args[3]
+            val port = args[4].toInt()
+
+            val ss = ServerSocket()
+            ss.reuseAddress = true
+            ss.bind(InetSocketAddress(port))
+            startBeacon(port)
+            p("TV bekleniyor (port $port)... TV uygulamasini acin.")
+            val tv = ss.accept()
+            beacon = false
+            tv.tcpNoDelay = true
+            p("TV baglandi: ${tv.inetAddress.hostAddress}")
+            val out = tv.getOutputStream()
 
             val dst = "/data/local/tmp/m2t-scrcpy-server.jar"
             ZipFile(apk).use { z ->
@@ -41,7 +95,6 @@ object RelayMain {
                     ?: throw IOException("apk icinde assets/scrcpy-server.jar yok")
                 z.getInputStream(e).use { i -> File(dst).outputStream().use { o -> i.copyTo(o) } }
             }
-            p("jar yazildi: ${File(dst).length()} bayt")
 
             val scid = "%08x".format(Random.nextInt(1, 0x7fffffff))
             val cmd = listOf(
@@ -55,12 +108,12 @@ object RelayMain {
             val pb = ProcessBuilder(cmd)
             pb.environment()["CLASSPATH"] = dst
             pb.redirectErrorStream(true)
-            proc = pb.start()
-            val pr = proc
+            val proc = pb.start()
+            serverProc = proc
 
             thread(isDaemon = true) {
                 try {
-                    pr.inputStream.bufferedReader().forEachLine {
+                    proc.inputStream.bufferedReader().forEachLine {
                         p("[sunucu] $it")
                         val m = Regex("""New display:.*\(id=(\d+)\)""").find(it)
                         if (m != null) displayId = m.groupValues[1].toInt()
@@ -79,43 +132,18 @@ object RelayMain {
                     Thread.sleep(200)
                 }
             }
+            if (sock == null) throw IOException("sunucu soketine baglanilamadi (10 sn)")
+            val input = sock.inputStream
 
-            if (sock == null) {
-                p("HATA: sunucu soketine baglanilamadi (10 sn).")
-            } else {
-                p("Sokete baglandi.")
-                sock.soTimeout = 3000
-                val input = sock.inputStream
-
-                // scrcpy 3.x basligi: 1 dummy bayt + 64 bayt cihaz adi + 12 bayt codec bilgisi
-                val head = ByteArray(77)
-                var n = 0
-                try {
-                    while (n < head.size) {
-                        val r = input.read(head, n, head.size - n)
-                        if (r < 0) break
-                        n += r
+            // Sanal ekran acilinca uygulamayi orada baslat (ayri is parcacigi)
+            if (startApp.isNotBlank()) {
+                thread(isDaemon = true) {
+                    val waitEnd = System.currentTimeMillis() + 10_000
+                    while (displayId < 0 && System.currentTimeMillis() < waitEnd) Thread.sleep(100)
+                    if (displayId < 0) {
+                        p("UYARI: sanal ekran numarasi bulunamadi")
+                        return@thread
                     }
-                } catch (e: Exception) {
-                    p("Baslik okunurken: ${e.message}")
-                }
-                p("Baslik: $n bayt okundu")
-                p("Ilk 32 bayt (hex): " + head.take(minOf(n, 32)).joinToString(" ") { "%02x".format(it) })
-                if (n >= 77) {
-                    val name = String(head, 1, 64, Charsets.UTF_8).trimEnd('\u0000')
-                    fun int32(o: Int) = ((head[o].toInt() and 0xff) shl 24) or ((head[o + 1].toInt() and 0xff) shl 16) or
-                            ((head[o + 2].toInt() and 0xff) shl 8) or (head[o + 3].toInt() and 0xff)
-                    p("Cihaz adi: $name")
-                    p("Codec: 0x%08x, boyut: %dx%d".format(int32(65), int32(69), int32(73)))
-                    p("Bayt 65-76 (hex): " + head.slice(65..76).joinToString(" ") { "%02x".format(it) })
-                }
-
-                // Sanal ekran numarasini bekle, uygulamayi o ekranda ac
-                val waitEnd = System.currentTimeMillis() + 5000
-                while (displayId < 0 && System.currentTimeMillis() < waitEnd) Thread.sleep(100)
-                if (displayId < 0) {
-                    p("UYARI: sanal ekran numarasi sunucu gunlugunde bulunamadi.")
-                } else if (startApp.isNotBlank()) {
                     p("Uygulama sanal ekranda aciliyor: $startApp (ekran $displayId)")
                     try {
                         val am = ProcessBuilder(
@@ -128,41 +156,34 @@ object RelayMain {
                         p("am hatasi: $e")
                     }
                 }
-
-                sock.soTimeout = 6000
-                val buf = ByteArray(65536)
-                var total = 0L
-                // Basliktan sonraki ilk 48 bayti ham olarak goster (kare basligi duzenini cozmek icin)
-                try {
-                    val first = ByteArray(48)
-                    var fn = 0
-                    while (fn < first.size) {
-                        val r = input.read(first, fn, first.size - fn)
-                        if (r < 0) break
-                        fn += r
-                    }
-                    total += fn
-                    p("Basliktan sonraki ilk $fn bayt (hex): " + first.take(fn).joinToString(" ") { "%02x".format(it) })
-                } catch (e: Exception) {
-                    p("Ilk kare okunurken: ${e.message}")
-                }
-                val end = System.currentTimeMillis() + 5000
-                try {
-                    while (System.currentTimeMillis() < end) {
-                        val r = input.read(buf)
-                        if (r < 0) break
-                        total += r
-                    }
-                } catch (_: Exception) {
-                }
-                p("5 sn icinde gelen video verisi: $total bayt")
             }
-            Thread.sleep(500)
+
+            // Ham akisi TV'ye aynen ilet
+            val buf = ByteArray(65536)
+            var total = 0L
+            var last = System.currentTimeMillis()
+            p("Yayin basladi.")
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) {
+                    p("Sunucu akisi bitti.")
+                    break
+                }
+                out.write(buf, 0, n)
+                out.flush()
+                total += n
+                val now = System.currentTimeMillis()
+                if (now - last > 5000) {
+                    p("[akis] toplam ${total / 1024} KB")
+                    last = now
+                }
+            }
         } catch (e: Throwable) {
-            p("ISTISNA: $e")
+            p("SONLANDI: $e")
         } finally {
+            beacon = false
             try { sock?.close() } catch (_: Exception) {}
-            try { proc?.destroy() } catch (_: Exception) {}
+            try { serverProc?.destroy() } catch (_: Exception) {}
         }
         p("BITTI")
         System.exit(0)

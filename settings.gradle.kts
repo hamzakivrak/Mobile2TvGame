@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "Mobile2TvGame"
-include(":app")
+include(":app", ":tv")
