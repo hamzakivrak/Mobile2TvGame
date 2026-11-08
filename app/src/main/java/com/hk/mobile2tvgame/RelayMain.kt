@@ -17,6 +17,9 @@ import kotlin.random.Random
  */
 object RelayMain {
 
+    @Volatile
+    private var displayId = -1
+
     private fun p(s: String) {
         println(s)
         System.out.flush()
@@ -47,8 +50,7 @@ object RelayMain {
                 "audio=false", "control=false",
                 "video_codec=h264",
                 "tunnel_forward=true", "send_dummy_byte=true",
-                "new_display=$display",
-                "start_app=$startApp"
+                "new_display=$display"
             )
             val pb = ProcessBuilder(cmd)
             pb.environment()["CLASSPATH"] = dst
@@ -58,7 +60,11 @@ object RelayMain {
 
             thread(isDaemon = true) {
                 try {
-                    pr.inputStream.bufferedReader().forEachLine { p("[sunucu] $it") }
+                    pr.inputStream.bufferedReader().forEachLine {
+                        p("[sunucu] $it")
+                        val m = Regex("""New display:.*\(id=(\d+)\)""").find(it)
+                        if (m != null) displayId = m.groupValues[1].toInt()
+                    }
                 } catch (_: Exception) {
                 }
             }
@@ -103,9 +109,29 @@ object RelayMain {
                     p("Codec: 0x%08x, boyut: %dx%d".format(int32(65), int32(69), int32(73)))
                 }
 
+                // Sanal ekran numarasini bekle, uygulamayi o ekranda ac
+                val waitEnd = System.currentTimeMillis() + 5000
+                while (displayId < 0 && System.currentTimeMillis() < waitEnd) Thread.sleep(100)
+                if (displayId < 0) {
+                    p("UYARI: sanal ekran numarasi sunucu gunlugunde bulunamadi.")
+                } else if (startApp.isNotBlank()) {
+                    p("Uygulama sanal ekranda aciliyor: $startApp (ekran $displayId)")
+                    try {
+                        val am = ProcessBuilder(
+                            "/system/bin/am", "start", "--display", displayId.toString(),
+                            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER",
+                            "-p", startApp
+                        ).redirectErrorStream(true).start()
+                        am.inputStream.bufferedReader().forEachLine { p("[am] $it") }
+                    } catch (e: Exception) {
+                        p("am hatasi: $e")
+                    }
+                }
+
+                sock.soTimeout = 6000
                 val buf = ByteArray(65536)
                 var total = 0L
-                val end = System.currentTimeMillis() + 3000
+                val end = System.currentTimeMillis() + 5000
                 try {
                     while (System.currentTimeMillis() < end) {
                         val r = input.read(buf)
@@ -114,7 +140,7 @@ object RelayMain {
                     }
                 } catch (_: Exception) {
                 }
-                p("3 sn icinde gelen video verisi: $total bayt")
+                p("5 sn icinde gelen video verisi: $total bayt")
             }
             Thread.sleep(500)
         } catch (e: Throwable) {

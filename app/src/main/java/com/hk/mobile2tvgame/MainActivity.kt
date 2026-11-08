@@ -38,12 +38,12 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad * 2, pad, pad)
         }
-        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.2)" }
+        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.3)" }
         root.addView(status)
 
         versionEdit = field(root, "scrcpy-server surumu", "5.0.1")
         displayEdit = field(root, "Sanal ekran (GENISLIKxYUKSEKLIK/DPI)", "1920x1080/360")
-        appEdit = field(root, "Baslatilacak uygulama (?ad ya da paket adi)", "?chrome")
+        appEdit = field(root, "Baslatilacak uygulamanin PAKET adi", "com.android.chrome")
 
         val permBtn = Button(this).apply { text = "1) Shizuku izni iste" }
         permBtn.setOnClickListener { checkShizuku() }
