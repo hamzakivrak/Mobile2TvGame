@@ -1,10 +1,8 @@
 package com.hk.mobile2tvgame
 
 import android.app.Activity
-import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.IBinder
 import android.text.InputType
 import android.view.ViewGroup
 import android.widget.Button
@@ -24,23 +22,12 @@ class MainActivity : Activity() {
     private lateinit var appEdit: EditText
     private lateinit var runBtn: Button
 
-    private var service: IUserService? = null
-
-    private val connection = object : android.content.ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            service = IUserService.Stub.asInterface(binder)
-            runOnUiThread { setStatus("Shizuku hizmeti bagli. Testi baslatabilirsiniz.") }
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            service = null
-            runOnUiThread { setStatus("Shizuku hizmeti koptu.") }
-        }
-    }
-
     private val permListener = Shizuku.OnRequestPermissionResultListener { _, result ->
         runOnUiThread {
-            if (result == PackageManager.PERMISSION_GRANTED) bindService() else setStatus("Shizuku izni reddedildi.")
+            setStatus(
+                if (result == PackageManager.PERMISSION_GRANTED) "Shizuku izni verildi. Testi baslatabilirsiniz."
+                else "Shizuku izni reddedildi."
+            )
         }
     }
 
@@ -51,15 +38,15 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad * 2, pad, pad)
         }
-        status = TextView(this).apply { textSize = 15f; text = "Hazir." }
+        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.2)" }
         root.addView(status)
 
         versionEdit = field(root, "scrcpy-server surumu", "5.0.1")
         displayEdit = field(root, "Sanal ekran (GENISLIKxYUKSEKLIK/DPI)", "1920x1080/360")
         appEdit = field(root, "Baslatilacak uygulama (?ad ya da paket adi)", "?chrome")
 
-        val permBtn = Button(this).apply { text = "1) Shizuku izni iste / baglan" }
-        permBtn.setOnClickListener { connectShizuku() }
+        val permBtn = Button(this).apply { text = "1) Shizuku izni iste" }
+        permBtn.setOnClickListener { checkShizuku() }
         root.addView(permBtn)
 
         runBtn = Button(this).apply { text = "2) Testi baslat (~15 sn)" }
@@ -99,65 +86,25 @@ class MainActivity : Activity() {
         status.text = s
     }
 
-    private fun connectShizuku() {
+    private fun checkShizuku() {
         if (!Shizuku.pingBinder()) {
-            setStatus("Shizuku calismiyor. Shizuku uygulamasini acip baslatin (kablosuz hata ayiklama ile).")
+            setStatus("Shizuku calismiyor. Shizuku uygulamasini acip baslatin.")
             return
         }
         if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-            bindService()
+            setStatus("Shizuku hazir (izin var). Testi baslatabilirsiniz.")
         } else {
             setStatus("Shizuku izni isteniyor...")
             Shizuku.requestPermission(100)
         }
     }
 
-    private fun bindService() {
-        setStatus("Shizuku hizmetine baglaniliyor...")
-        val args = Shizuku.UserServiceArgs(ComponentName(packageName, UserService::class.java.name))
-            .daemon(false)
-            .processNameSuffix("m2t")
-            .debuggable(false)
-            .version(1)
-        try {
-            Shizuku.bindUserService(args, connection)
-        } catch (e: Throwable) {
-            output.text = "bindUserService HATA:\n$e\n\n" + diag()
-            setStatus("Baglanma hatasi (asagiya bakin).")
-            return
-        }
-        // 10 sn icinde baglanmazsa tanilama yaz
-        status.postDelayed({
-            if (service == null) {
-                output.text = "10 sn icinde baglanamadi.\n\n" + diag()
-                setStatus("Hizmet baglanamadi (asagiya bakin).")
-            }
-        }, 10_000)
-    }
-
-    private fun diag(): String {
-        val sb = StringBuilder()
-        try { sb.append("pingBinder: ${Shizuku.pingBinder()}\n") } catch (e: Throwable) { sb.append("pingBinder hata: $e\n") }
-        try { sb.append("Shizuku surum: ${Shizuku.getVersion()}\n") } catch (e: Throwable) { sb.append("getVersion hata: $e\n") }
-        try { sb.append("Shizuku uid: ${Shizuku.getUid()}\n") } catch (e: Throwable) { sb.append("getUid hata: $e\n") }
-        try { sb.append("Izin: ${Shizuku.checkSelfPermission()}\n") } catch (e: Throwable) { sb.append("izin hata: $e\n") }
-        sb.append("Android: ${android.os.Build.VERSION.SDK_INT}\n")
-        sb.append("Paket: $packageName\n")
-        return sb.toString()
-    }
-
     private fun runTest() {
-        val svc = service
-        if (svc == null) {
-            setStatus("Once 1) dugmesiyle Shizuku'ya baglanin.")
+        if (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+            setStatus("Once 1) dugmesiyle Shizuku iznini alin.")
             return
         }
-        val jar = try {
-            assets.open("scrcpy-server.jar").use { it.readBytes() }
-        } catch (e: Exception) {
-            output.text = "assets/scrcpy-server.jar bulunamadi. README'ye bakin."
-            return
-        }
+        val apk = applicationInfo.sourceDir
         val v = versionEdit.text.toString().trim()
         val d = displayEdit.text.toString().trim()
         val a = appEdit.text.toString().trim()
@@ -165,15 +112,31 @@ class MainActivity : Activity() {
         setStatus("Test calisiyor, bekleyin...")
         output.text = ""
         thread {
-            val result = try {
-                svc.runTest(jar, v, a, d)
+            try {
+                // Shizuku.newProcess ozel (private) oldugu icin yansima ile cagrilir
+                val m = Shizuku::class.java.getDeclaredMethod(
+                    "newProcess",
+                    Array<String>::class.java, Array<String>::class.java, String::class.java
+                )
+                m.isAccessible = true
+                val sh = "CLASSPATH='$apk' /system/bin/app_process / com.hk.mobile2tvgame.RelayMain " +
+                        "'$apk' '$v' '$a' '$d' 2>&1"
+                val proc = m.invoke(null, arrayOf("sh", "-c", sh), null, null) as Process
+                proc.inputStream.bufferedReader().forEachLine { line ->
+                    runOnUiThread { output.append(line + "\n") }
+                }
+                runOnUiThread {
+                    output.append("\n(surec kodu: ${try { proc.waitFor() } catch (e: Exception) { e.toString() }})\n")
+                    setStatus("Test bitti.")
+                    runBtn.isEnabled = true
+                }
             } catch (e: Throwable) {
-                "HATA: $e"
-            }
-            runOnUiThread {
-                output.text = result
-                setStatus("Test bitti.")
-                runBtn.isEnabled = true
+                runOnUiThread {
+                    output.append("HATA: $e\n")
+                    (e.cause)?.let { output.append("Neden: $it\n") }
+                    setStatus("Hata (asagiya bakin).")
+                    runBtn.isEnabled = true
+                }
             }
         }
     }
