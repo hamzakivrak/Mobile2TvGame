@@ -107,6 +107,7 @@ object RelayMain {
                             ((head[o + 2].toInt() and 0xff) shl 8) or (head[o + 3].toInt() and 0xff)
                     p("Cihaz adi: $name")
                     p("Codec: 0x%08x, boyut: %dx%d".format(int32(65), int32(69), int32(73)))
+                    p("Bayt 65-76 (hex): " + head.slice(65..76).joinToString(" ") { "%02x".format(it) })
                 }
 
                 // Sanal ekran numarasini bekle, uygulamayi o ekranda ac
@@ -131,6 +132,20 @@ object RelayMain {
                 sock.soTimeout = 6000
                 val buf = ByteArray(65536)
                 var total = 0L
+                // Basliktan sonraki ilk 48 bayti ham olarak goster (kare basligi duzenini cozmek icin)
+                try {
+                    val first = ByteArray(48)
+                    var fn = 0
+                    while (fn < first.size) {
+                        val r = input.read(first, fn, first.size - fn)
+                        if (r < 0) break
+                        fn += r
+                    }
+                    total += fn
+                    p("Basliktan sonraki ilk $fn bayt (hex): " + first.take(fn).joinToString(" ") { "%02x".format(it) })
+                } catch (e: Exception) {
+                    p("Ilk kare okunurken: ${e.message}")
+                }
                 val end = System.currentTimeMillis() + 5000
                 try {
                     while (System.currentTimeMillis() < end) {
