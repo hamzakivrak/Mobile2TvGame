@@ -55,6 +55,38 @@ object RelayMain {
     @Volatile
     private var touchLogged = false
 
+    private fun runCmd(vararg c: String): String {
+        val pr = ProcessBuilder(*c).redirectErrorStream(true).start()
+        val t = pr.inputStream.bufferedReader().readText()
+        pr.waitFor()
+        return t
+    }
+
+    /** target: "paket/etkinlik" (tercih edilen) ya da yalnizca paket adi. */
+    private fun launchApp(target: String) {
+        var comp = target
+        if (!comp.contains('/')) {
+            // Paket adindan baslatici bilesenini bulmayi dene
+            try {
+                val r = runCmd(
+                    "/system/bin/cmd", "package", "resolve-activity", "--brief",
+                    "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", target
+                )
+                val last = r.lines().map { it.trim() }.lastOrNull { it.contains('/') && !it.contains(' ') }
+                if (last != null) comp = last
+            } catch (e: Exception) {
+                p("cozum hatasi: $e")
+            }
+        }
+        p("Baslatilan bilesen: $comp")
+        val cmd = mutableListOf(
+            "/system/bin/am", "start", "--display", displayId.toString(),
+            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"
+        )
+        if (comp.contains('/')) { cmd.add("-n"); cmd.add(comp) } else { cmd.add("-p"); cmd.add(comp) }
+        runCmd(*cmd.toTypedArray()).lines().filter { it.isNotBlank() }.forEach { p("[am] $it") }
+    }
+
     /** scrcpy INJECT_TOUCH_EVENT (tip 2), 32 bayt. action: 0=bas, 1=birak, 2=surukle. nx,ny: 0..1 */
     private fun sendTouch(action: Int, id: Int, nx: Double, ny: Double) {
         val o = ctlOut ?: return
@@ -257,12 +289,7 @@ object RelayMain {
                     }
                     p("Uygulama sanal ekranda aciliyor: $startApp (ekran $displayId)")
                     try {
-                        val am = ProcessBuilder(
-                            "/system/bin/am", "start", "--display", displayId.toString(),
-                            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER",
-                            "-p", startApp
-                        ).redirectErrorStream(true).start()
-                        am.inputStream.bufferedReader().forEachLine { p("[am] $it") }
+                        launchApp(startApp)
                     } catch (e: Exception) {
                         p("am hatasi: $e")
                     }

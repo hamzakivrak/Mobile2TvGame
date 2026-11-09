@@ -163,7 +163,14 @@ class MainActivity : Activity() {
         val apk = applicationInfo.sourceDir
         val v = versionEdit.text.toString().trim()
         val d = displayEdit.text.toString().trim()
-        val a = appEdit.text.toString().trim()
+        val a0 = appEdit.text.toString().trim()
+        // Paket adindan baslatici bilesenini (paket/etkinlik) burada bul
+        val a = if (a0.isEmpty() || a0.contains('/')) a0 else (
+                try {
+                    packageManager.getLaunchIntentForPackage(a0)?.component?.flattenToShortString()
+                } catch (e: Exception) {
+                    null
+                } ?: a0)
         startBtn.isEnabled = false
         setStatus("Yayin hazirlaniyor. TV uygulamasini acin.")
         output.text = ""
