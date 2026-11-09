@@ -12,7 +12,7 @@
   #bar{position:fixed;top:6px;left:50%;transform:translateX(-50%);display:flex;gap:6px;align-items:center;z-index:2;flex-wrap:nowrap;white-space:nowrap}
   #bar button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:6px 11px;font-size:13px}
   #bar button.active{border-color:var(--warn);color:var(--warn)}
-  #info{font:11px monospace;opacity:.85;min-width:95px;text-align:center}
+  #info{font:11px monospace;opacity:.85;min-width:105px;text-align:center}
 
   /* Uygulamalar ve Ayarlar Panelleri */
   .modal{position:fixed;inset:0;background:rgba(11,14,20,.97);z-index:5;display:none;flex-direction:column;
@@ -89,24 +89,24 @@
         </select>
       </div>
       <div class="s-row">
-        <label for="chkTwoFinger">2 Parmakla Kaydirma (Touchpad)</label>
+        <label for="chkTwoFinger">2 Parmakla Kaydirma (Dikey + Yatay)</label>
         <input id="chkTwoFinger" type="checkbox">
       </div>
-      <div class="s-sub">IMLEC modunda ekrana 2 parmakla basip kaydirarak sayfayi kaydirir.</div>
+      <div class="s-sub">Orta alanda 2 parmakla basip her yone (asagi/yukari/saga/sola) kaydirir.</div>
     </div>
 
     <div class="s-card">
       <div class="s-row">
-        <label>Kaydirma Hizi: <span id="lblScrollSpeed">1.4x</span></label>
-        <input id="rngScrollSpeed" type="range" min="0.6" max="3.0" step="0.2" value="1.4">
+        <label>Kaydirma Hizi: <span id="lblScrollSpeed">1.6x</span></label>
+        <input id="rngScrollSpeed" type="range" min="0.6" max="3.2" step="0.2" value="1.6">
       </div>
       <div class="s-row">
         <label>Imlec Hizi: <span id="lblCurSpeed">1.3x</span></label>
         <input id="rngCurSpeed" type="range" min="0.6" max="2.6" step="0.1" value="1.3">
       </div>
       <div class="s-row">
-        <label>Cubuk Genisligi: <span id="lblBarSize">54px</span></label>
-        <input id="rngBarSize" type="range" min="38" max="80" step="4" value="54">
+        <label>Cubuk Genisligi: <span id="lblBarSize">56px</span></label>
+        <input id="rngBarSize" type="range" min="40" max="84" step="4" value="56">
       </div>
     </div>
   </div>
@@ -119,19 +119,19 @@ const DEFAULT_SETTINGS = {
   hBar: true,          // Alt yatay kaydirma cubugu
   twoFinger: true,     // 2 parmakla kaydirma
   scrollDir: 'wheel',  // 'wheel': cubugu asagi cekince sayfa asagi iner | 'touch': dokunmatik yonu
-  scrollSpeed: 1.4,
+  scrollSpeed: 1.6,
   curSpeed: 1.3,
-  barSize: 54
+  barSize: 56
 };
 
 let CFG = Object.assign({}, DEFAULT_SETTINGS);
 try {
-  const s = JSON.parse(localStorage.getItem('m2t_cfg_v1') || '{}');
+  const s = JSON.parse(localStorage.getItem('m2t_cfg_v2') || '{}');
   CFG = Object.assign({}, DEFAULT_SETTINGS, s);
 } catch(e) {}
 
 function saveCfg(){
-  try { localStorage.setItem('m2t_cfg_v1', JSON.stringify(CFG)); } catch(e) {}
+  try { localStorage.setItem('m2t_cfg_v2', JSON.stringify(CFG)); } catch(e) {}
 }
 
 /* ============ VARSAYILAN OYUN PROFILI ============ */
@@ -172,8 +172,11 @@ try {
 
 // Touchpad (IMLEC) durumu
 let curX = 0.5, curY = 0.5;
-let gestureMultiTouch = false;
-let multiTouchCooldownUntil = 0;
+// Coklu parmak oturum kilidi: ekrana 2. parmak degdigi andan tum parmaklar kalkana kadar
+// tek parmak tiklamalarini ve imlec sarsintilarini %100 engeller
+let maxTouchesInGesture = 0;
+let multiTouchEndedAt = 0;
+let twoFingerPrev = null;
 
 // Kumanda kalibrasyon durumu
 let editMode = false;
@@ -203,23 +206,23 @@ function updateTopBar(){
 
 function computeLayout(){
   const bs = CFG.barSize;
-  const rightPad = (mode !== 'kumanda' && CFG.vBar) ? (bs + 8) : 0;
-  const bottomPad = (mode !== 'kumanda' && CFG.hBar) ? (bs + 8) : 0;
+  const rightPad = (mode !== 'kumanda' && CFG.vBar) ? (bs + 10) : 0;
+  const bottomPad = (mode !== 'kumanda' && CFG.hBar) ? (bs + 10) : 0;
   const topPad = 46;
-  const availW = Math.max(100, W - rightPad - 12);
-  const availH = Math.max(100, H - topPad - bottomPad - 6);
+  const availW = Math.max(100, W - rightPad - 16);
+  const availH = Math.max(100, H - topPad - bottomPad - 8);
 
   let aw = availW, ah = aw / TV_ORAN;
   if (ah > availH) { ah = availH; aw = ah * TV_ORAN; }
   area = {
-    x: 6 + (availW - aw) / 2,
+    x: 8 + (availW - aw) / 2,
     y: topPad + (availH - ah) / 2,
     w: aw,
     h: ah
   };
 
   if (mode !== 'kumanda' && CFG.vBar) {
-    vBarRect = { x: W - bs - 4, y: topPad, w: bs, h: H - topPad - bottomPad - 6, btnH: 42 };
+    vBarRect = { x: W - bs - 4, y: topPad, w: bs, h: H - topPad - bottomPad - 6, btnH: 44 };
   } else {
     vBarRect = null;
   }
@@ -247,16 +250,18 @@ function send(a,id,nx,ny){
   try { if (window.Android) Android.touch(a,id,nx,ny); } catch(e) {}
 }
 
-/* ============ KAYDIRMA MOTORU (SCROLL ENGINE) ============
-   Android'de sayfa/liste kaydirmanin en verimli yolu:
-   - Sanal ekranda (0.50, 0.50) merkezinden temiz bir dokunus baslatip (id=9),
-   - Parmak hareketini puruzsuz araliklarla (action=2) iletmek,
-   - Kenar sinirina (0.12..0.88) gelindiginde ise dokunusu birakip (action=1),
-     50ms bekleyip (Android VelocityTracker'in ters sicrama yapmasini onlemek icin!)
-     merkezden yeni bir dokunus baslatmaktir. */
+/* ============ DOKUNMA ALGILAMAYAN SAF KAYDIRMA MOTORU (SCROLL ENGINE) ============
+   Neden onceki kaydirma tiklama gibi algilaniyordu?
+   - Cunku parmak degdigi anda (henuz hareket etmeden) ACTION_DOWN gonderiliyordu.
+   Yeni Mimari:
+   1. Cubuga veya 2 parmakla ekrana dokundugunuzda TV'ye HICBIR dokunus gonderilmez.
+   2. Sadece parmaginiz kaydirma esigini (> 5px) astigi anda (0.50, 0.50) noktasindan
+      ACTION_DOWN baslatilir ve AYNI ANDA Android'in TouchSlop esigini (0.04 = ~45px)
+      asan ilk ACTION_MOVE gonderilir; boylece Android altindaki butona/linke basmak
+      yerine hareketi %100 SCROLL (sayfa kaydirma) olarak yakalar! */
 const SCROLL_PID = 9;
 let scroller = {
-  active: false,
+  down: false,
   resetting: false,
   sx: 0.5,
   sy: 0.5,
@@ -265,41 +270,44 @@ let scroller = {
   animTimer: null
 };
 
-function startContinuousScroll(){
+function feedScrollDelta(normDx, normDy){
+  if (scroller.resetting) return;
   if (scroller.animTimer) { clearInterval(scroller.animTimer); scroller.animTimer = null; }
-  scroller.active = true;
-  scroller.resetting = false;
-  scroller.sx = 0.5;
-  scroller.sy = 0.5;
-  send(0, SCROLL_PID, scroller.sx, scroller.sy);
-}
 
-function stepContinuousScroll(normDx, normDy){
-  if (!scroller.active || scroller.resetting) return;
-  // Kaydirma yonu:
-  // 'wheel' modunda: cubugu asagi cekince (normDy > 0) sayfanin asagi inmesi icin
-  // Android ekraninda parmak yukari (negatif Y) suruklenmelidir!
   const dirSign = (CFG.scrollDir === 'wheel') ? -1 : 1;
   const moveX = normDx * CFG.scrollSpeed * dirSign;
   const moveY = normDy * CFG.scrollSpeed * dirSign;
 
+  scroller.thumbV = Math.min(1, Math.max(0, scroller.thumbV + normDy * 1.3));
+  scroller.thumbH = Math.min(1, Math.max(0, scroller.thumbH + normDx * 1.3));
+
+  if (!scroller.down) {
+    // Ilk kaydirma hareketi: merkezde baslat ve TouchSlop esigini aninda gec!
+    scroller.down = true;
+    scroller.sx = 0.50;
+    scroller.sy = 0.50;
+    send(0, SCROLL_PID, scroller.sx, scroller.sy);
+
+    const len = Math.hypot(moveX, moveY) || 1;
+    const slopX = (moveX / len) * 0.038;
+    const slopY = (moveY / len) * 0.038;
+    scroller.sx = Math.min(0.90, Math.max(0.10, scroller.sx + slopX + moveX));
+    scroller.sy = Math.min(0.90, Math.max(0.10, scroller.sy + slopY + moveY));
+    send(2, SCROLL_PID, scroller.sx, scroller.sy);
+    return;
+  }
+
   let nx = scroller.sx + moveX;
   let ny = scroller.sy + moveY;
 
-  scroller.thumbV = Math.min(1, Math.max(0, scroller.thumbV + normDy * 1.2));
-  scroller.thumbH = Math.min(1, Math.max(0, scroller.thumbH + normDx * 1.2));
-
-  if (nx < 0.10 || nx > 0.90 || ny < 0.10 || ny > 0.90) {
-    // Sinira ulasildi: mevcut suruklemeyi birak, 50ms bekle, merkezden devam et
+  if (nx < 0.08 || nx > 0.92 || ny < 0.08 || ny > 0.92) {
+    // Ekran kenarina ulasildi: mevcut kaydirmayi birak, 55ms sonra merkezden yeni darbe baslat
     send(1, SCROLL_PID, scroller.sx, scroller.sy);
+    scroller.down = false;
     scroller.resetting = true;
     setTimeout(() => {
-      if (!scroller.active) { scroller.resetting = false; return; }
-      scroller.sx = 0.5;
-      scroller.sy = 0.5;
-      send(0, SCROLL_PID, scroller.sx, scroller.sy);
       scroller.resetting = false;
-    }, 50);
+    }, 55);
   } else {
     scroller.sx = nx;
     scroller.sy = ny;
@@ -307,32 +315,30 @@ function stepContinuousScroll(normDx, normDy){
   }
 }
 
-function stopContinuousScroll(){
-  if (scroller.active) {
-    if (!scroller.resetting) {
-      send(1, SCROLL_PID, scroller.sx, scroller.sy);
-    }
-    scroller.active = false;
-    scroller.resetting = false;
-    scroller.thumbV = 0.5;
-    scroller.thumbH = 0.5;
-    // TV'deki imleci eski konumunda gostermeye devam et
-    setTimeout(() => send(3, 0, curX, curY), 30);
+function finishScrollGesture(){
+  if (scroller.down) {
+    send(1, SCROLL_PID, scroller.sx, scroller.sy);
+    scroller.down = false;
   }
+  scroller.resetting = false;
+  scroller.thumbV = 0.5;
+  scroller.thumbH = 0.5;
+  setTimeout(() => send(3, 0, curX, curY), 25);
 }
 
-/** ▲ / ▼ / ◀ / ▶ dugmelerine basildiginda otomatik yumusak sayfa kaydirma (Fling/Swipe) */
+/** ▲ / ▼ / ◀ / ▶ dugmeleri icin dokunma algilamayan hizli sayfa kaydirma */
 function triggerSmoothSwipe(dirX, dirY){
-  stopContinuousScroll();
+  finishScrollGesture();
   if (scroller.animTimer) { clearInterval(scroller.animTimer); scroller.animTimer = null; }
-  // Ornek: dirY = +1 (sayfayi asagi kaydir) -> parmak y=0.72'den y=0.28'e yukari cekilir
-  const startX = 0.5 - dirX * 0.22;
-  const startY = 0.5 - dirY * 0.24;
-  const endX   = 0.5 + dirX * 0.22;
-  const endY   = 0.5 + dirY * 0.24;
-  const steps = 10;
+  const startX = 0.50;
+  const startY = 0.50;
+  const endX   = 0.50 + dirX * 0.34;
+  const endY   = 0.50 + dirY * 0.36;
+  const steps = 8;
   let step = 0;
   send(0, SCROLL_PID, startX, startY);
+  // Ilk adimda TouchSlop esigini aninda gec
+  send(2, SCROLL_PID, startX + dirX * 0.05, startY + dirY * 0.05);
   scroller.animTimer = setInterval(() => {
     step++;
     const t = step / steps;
@@ -345,9 +351,9 @@ function triggerSmoothSwipe(dirX, dirY){
       send(1, SCROLL_PID, endX, endY);
       clearInterval(scroller.animTimer);
       scroller.animTimer = null;
-      setTimeout(() => send(3, 0, curX, curY), 35);
+      setTimeout(() => send(3, 0, curX, curY), 30);
     }
-  }, 16);
+  }, 14);
 }
 
 // Parmak kimligi -> kucuk tamsayi
@@ -371,102 +377,133 @@ function hitControl(x,y){
 }
 
 function inRect(x, y, r){
-  return r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  return !!(r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+}
+
+// Orta kesikli alanda kac aktif parmak oldugunu bulur
+function getAreaTouches(touchList){
+  const res = [];
+  for (const t of touchList) {
+    const a = active.get(t.identifier);
+    if (a && (a.kind === 'vscroll' || a.kind === 'hscroll' || a.kind === 'scroll_btn')) continue;
+    if (inRect(t.clientX, t.clientY, area) || (a && a.kind === 'trackpad')) {
+      res.push(t);
+    }
+  }
+  return res;
 }
 
 function onStart(e){
   e.preventDefault();
   const now = performance.now();
 
-  // 1) Sag Dikey veya Alt Yatay Kaydirma Cubuguna dokunuldu mu kontrol et
+  // 1) Sag Dikey veya Alt Yatay Kaydirma Cubugu kontrolu (Dokunma/Tiklama uretmez!)
   for (const t of e.changedTouches) {
     const x = t.clientX, y = t.clientY;
     if (inRect(x, y, vBarRect)) {
       if (y < vBarRect.y + vBarRect.btnH) {
-        // Ust ▲ dugmesi (Sayfayi yukari kaydir -> parmak asagi iner)
+        active.set(t.identifier, { kind: 'scroll_btn' });
         triggerSmoothSwipe(0, +1);
         info.textContent = 'SAYFA ▲';
       } else if (y > vBarRect.y + vBarRect.h - vBarRect.btnH) {
-        // Alt ▼ dugmesi (Sayfayi asagi kaydir -> parmak yukari cikar)
+        active.set(t.identifier, { kind: 'scroll_btn' });
         triggerSmoothSwipe(0, -1);
         info.textContent = 'SAYFA ▼';
       } else {
-        startContinuousScroll();
-        active.set(t.identifier, { kind: 'vscroll', lx: x, ly: y });
-        info.textContent = 'DIKEY KAYDIR';
+        // Sadece kaydirma durumu olustur; parmak kayana kadar TV'ye dokunus gonderme!
+        active.set(t.identifier, { kind: 'vscroll', sy: y, ly: y, started: false });
+        info.textContent = 'DIKEY CUBUK';
       }
       draw();
       continue;
     }
     if (inRect(x, y, hBarRect)) {
       if (x < hBarRect.x + hBarRect.btnW) {
-        // Sol ◀ dugmesi
+        active.set(t.identifier, { kind: 'scroll_btn' });
         triggerSmoothSwipe(+1, 0);
         info.textContent = 'SAYFA ◀';
       } else if (x > hBarRect.x + hBarRect.w - hBarRect.btnW) {
-        // Sag ▶ dugmesi
+        active.set(t.identifier, { kind: 'scroll_btn' });
         triggerSmoothSwipe(-1, 0);
         info.textContent = 'SAYFA ▶';
       } else {
-        startContinuousScroll();
-        active.set(t.identifier, { kind: 'hscroll', lx: x, ly: y });
-        info.textContent = 'YATAY KAYDIR';
+        active.set(t.identifier, { kind: 'hscroll', sx: x, lx: x, started: false });
+        info.textContent = 'YATAY CUBUK';
       }
       draw();
       continue;
     }
   }
 
+  // 2) IMLEC Modu: Yalnizca ortadaki kesikli cizgili dikdortgen (area) icindeki dokunuslari kabul et!
   if (mode === 'imlec') {
-    // 2 Parmakla Kaydirma (Touchpad Scroll)
-    if (CFG.twoFinger && e.touches.length >= 2) {
-      gestureMultiTouch = true;
-      for (const a of active.values()) {
-        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
-        if (a.dragging) { send(1, a.p, curX, curY); a.dragging = false; }
-      }
-      const t0 = e.touches[0], t1 = e.touches[1];
-      const mx = (t0.clientX + t1.clientX) / 2;
-      const my = (t0.clientY + t1.clientY) / 2;
-      if (!scroller.active) {
-        startContinuousScroll();
-      }
-      scroller.twoFingerLx = mx;
-      scroller.twoFingerLy = my;
-      info.textContent = '2P KAYDIRMA';
-      draw();
-      return;
-    }
-
     for (const t of e.changedTouches) {
-      if (active.has(t.identifier)) continue; // kaydirma cubugundaysa atla
-      const x = t.clientX, y = t.clientY, p = pid(t);
+      if (active.has(t.identifier)) continue; // cubuktaki parmaklari atla
+      const x = t.clientX, y = t.clientY;
+      // Ortadaki kesikli alanin disindaki dokunuslari tamamen yoksay!
+      if (!inRect(x, y, area)) continue;
+
+      const p = pid(t);
       const state = {
         kind: 'trackpad', p,
         sx: x, sy: y, lx: x, ly: y,
         t0: now, moved: false, dragging: false, holdTimer: null
       };
-      state.holdTimer = setTimeout(() => {
-        if (!state.moved && !gestureMultiTouch && active.has(t.identifier)) {
-          state.dragging = true;
-          send(0, state.p, curX, curY);
-          info.textContent = 'SURUKLE: ' + curX.toFixed(2) + ',' + curY.toFixed(2);
-          draw();
-        }
-      }, 380);
       active.set(t.identifier, state);
-      send(3, p, curX, curY);
+    }
+
+    const areaTouches = getAreaTouches(e.touches);
+    if (areaTouches.length > maxTouchesInGesture) {
+      maxTouchesInGesture = areaTouches.length;
+    }
+
+    if (CFG.twoFinger && areaTouches.length >= 2) {
+      // 2. parmak algilandi: tum tek-parmak surukleme/tiklama zamanlayicilarini iptal et!
+      for (const a of active.values()) {
+        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+        if (a.dragging) { send(1, a.p, curX, curY); a.dragging = false; }
+      }
+      const t0 = areaTouches[0], t1 = areaTouches[1];
+      twoFingerPrev = {
+        x: (t0.clientX + t1.clientX) / 2,
+        y: (t0.clientY + t1.clientY) / 2,
+        sx: (t0.clientX + t1.clientX) / 2,
+        sy: (t0.clientY + t1.clientY) / 2,
+        moved: false
+      };
+      info.textContent = '2P KAYDIRMA HAZIR';
+      draw();
+      return;
+    }
+
+    // Tek parmak ise: 2. parmagin gecikmeli basma ihtimaline karsi basili-tutma zamanlayicisini 420ms kur
+    if (areaTouches.length === 1 && maxTouchesInGesture === 1) {
+      const t0 = areaTouches[0];
+      const st = active.get(t0.identifier);
+      if (st && !st.holdTimer) {
+        st.holdTimer = setTimeout(() => {
+          if (maxTouchesInGesture === 1 && !st.moved && active.has(t0.identifier)) {
+            st.dragging = true;
+            send(0, st.p, curX, curY);
+            info.textContent = 'SURUKLE: ' + curX.toFixed(2) + ',' + curY.toFixed(2);
+            draw();
+          }
+        }, 420);
+      }
+      send(3, 0, curX, curY);
       info.textContent = curX.toFixed(3) + ' , ' + curY.toFixed(3);
     }
     draw();
     return;
   }
 
+  // 3) AYNA ve KUMANDA Modlari
   for (const t of e.changedTouches) {
     if (active.has(t.identifier)) continue;
     const x = t.clientX, y = t.clientY;
     if (mode === 'ayna') {
-      if (x < area.x || x > area.x+area.w || y < area.y || y > area.y+area.h) continue;
+      // AYNA modunda da sadece ortadaki kesikli alan icindeki dokunuslar oyuna gider!
+      if (!inRect(x, y, area)) continue;
       const nx = (x-area.x)/area.w, ny = (y-area.y)/area.h, p = pid(t);
       active.set(t.identifier, {kind:'pad', p, nx, ny});
       send(0,p,nx,ny);
@@ -497,52 +534,81 @@ function onStart(e){
 
 function onMove(e){
   e.preventDefault();
+  const now = performance.now();
 
-  // 1) Sag ve Alt Kaydirma Cubugu hareketlerini isle
+  // 1) Sag ve Alt Kaydirma Cubugu suruklemesi
   for (const t of e.changedTouches) {
     const a = active.get(t.identifier);
     if (!a) continue;
     if (a.kind === 'vscroll') {
+      if (!a.started && Math.abs(t.clientY - a.sy) < 5) continue;
+      a.started = true;
       const dy = t.clientY - a.ly;
       a.ly = t.clientY;
-      const trackH = Math.max(100, (vBarRect ? vBarRect.h - 2 * vBarRect.btnH : H * 0.7));
-      stepContinuousScroll(0, dy / trackH);
+      const trackH = Math.max(90, (vBarRect ? vBarRect.h - 2 * vBarRect.btnH : H * 0.65));
+      feedScrollDelta(0, dy / trackH);
+      info.textContent = 'KAYDIR ⇅';
       draw();
     } else if (a.kind === 'hscroll') {
+      if (!a.started && Math.abs(t.clientX - a.sx) < 5) continue;
+      a.started = true;
       const dx = t.clientX - a.lx;
       a.lx = t.clientX;
-      const trackW = Math.max(100, (hBarRect ? hBarRect.w - 2 * hBarRect.btnW : W * 0.7));
-      stepContinuousScroll(dx / trackW, 0);
+      const trackW = Math.max(90, (hBarRect ? hBarRect.w - 2 * hBarRect.btnW : W * 0.65));
+      feedScrollDelta(dx / trackW, 0);
+      info.textContent = 'KAYDIR ⇄';
       draw();
     }
   }
 
+  // 2) IMLEC Modu Hareketleri
   if (mode === 'imlec') {
-    if (CFG.twoFinger && e.touches.length >= 2 && scroller.active) {
-      const t0 = e.touches[0], t1 = e.touches[1];
+    const areaTouches = getAreaTouches(e.touches);
+    if (areaTouches.length > maxTouchesInGesture) {
+      maxTouchesInGesture = areaTouches.length;
+    }
+
+    // 2 Parmakla Hem Dikey Hem Yatay Kaydirma
+    if (CFG.twoFinger && areaTouches.length >= 2) {
+      const t0 = areaTouches[0], t1 = areaTouches[1];
       const mx = (t0.clientX + t1.clientX) / 2;
       const my = (t0.clientY + t1.clientY) / 2;
-      const dx = mx - (scroller.twoFingerLx || mx);
-      const dy = my - (scroller.twoFingerLy || my);
-      scroller.twoFingerLx = mx;
-      scroller.twoFingerLy = my;
-      stepContinuousScroll(dx / area.w, dy / area.h);
+      if (!twoFingerPrev) {
+        twoFingerPrev = { x: mx, y: my, sx: mx, sy: my, moved: false };
+      }
+      const totalDist = Math.hypot(mx - twoFingerPrev.sx, my - twoFingerPrev.sy);
+      if (!twoFingerPrev.moved && totalDist < 6) return;
+      twoFingerPrev.moved = true;
+
+      const dx = mx - twoFingerPrev.x;
+      const dy = my - twoFingerPrev.y;
+      twoFingerPrev.x = mx;
+      twoFingerPrev.y = my;
+
+      feedScrollDelta(dx / area.w, dy / area.h);
+      info.textContent = '2P KAYDIR ⇅⇄';
       draw();
       return;
     }
 
-    if (performance.now() < multiTouchCooldownUntil) return;
+    // Eger bu oturumda 2 parmak kullanildiysa veya 2 parmak yeni birakildiysa imleci kipirdatma!
+    if (maxTouchesInGesture >= 2 || now < multiTouchEndedAt + 140) return;
 
     for (const t of e.changedTouches) {
-      const a = active.get(t.identifier); if (!a || a.kind !== 'trackpad') continue;
-      if (gestureMultiTouch) continue;
+      const a = active.get(t.identifier);
+      if (!a || a.kind !== 'trackpad') continue;
       const x = t.clientX, y = t.clientY;
+      // Ilk 35ms icinde 2. parmagin basmasini bekle (kucuk ms farklarinda imlec kaymasin)
+      if (!a.moved && (now - a.t0) < 35 && Math.hypot(x - a.sx, y - a.sy) < 10) continue;
+
       const dx = x - a.lx, dy = y - a.ly;
       a.lx = x; a.ly = y;
-      if (Math.hypot(x - a.sx, y - a.sy) > 9) {
+      if (Math.hypot(x - a.sx, y - a.sy) > 7) {
         a.moved = true;
         if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
       }
+      if (!a.moved) continue;
+
       const sens = CFG.curSpeed;
       curX = Math.min(1, Math.max(0, curX + (dx / area.w) * sens));
       curY = Math.min(1, Math.max(0, curY + (dy / area.h) * sens));
@@ -557,6 +623,7 @@ function onMove(e){
     return;
   }
 
+  // 3) AYNA ve KUMANDA Modu Hareketleri
   for (const t of e.changedTouches) {
     const a = active.get(t.identifier); if (!a) continue;
     const x = t.clientX, y = t.clientY;
@@ -591,43 +658,60 @@ function onEnd(e){
   e.preventDefault();
   const now = performance.now();
 
+  // 1) Kaydirma cubugu parmak birakma
   for (const t of e.changedTouches) {
     const a = active.get(t.identifier);
-    if (a && (a.kind === 'vscroll' || a.kind === 'hscroll')) {
-      stopContinuousScroll();
+    if (a && (a.kind === 'vscroll' || a.kind === 'hscroll' || a.kind === 'scroll_btn')) {
+      if (a.kind === 'vscroll' || a.kind === 'hscroll') {
+        finishScrollGesture();
+      }
       active.delete(t.identifier);
       idmap.delete(t.identifier);
     }
   }
 
+  // 2) IMLEC Modu parmak birakma
   if (mode === 'imlec') {
-    if (gestureMultiTouch && e.touches.length < 2) {
-      stopContinuousScroll();
-      multiTouchCooldownUntil = now + 90;
+    const areaTouchesRemaining = getAreaTouches(e.touches);
+    if (maxTouchesInGesture >= 2 && areaTouchesRemaining.length < 2) {
+      finishScrollGesture();
+      twoFingerPrev = null;
+      multiTouchEndedAt = now;
     }
+
     for (const t of e.changedTouches) {
       const a = active.get(t.identifier);
-      if (a) {
+      if (a && a.kind === 'trackpad') {
         if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
         if (a.dragging) {
           send(1, a.p, curX, curY);
-        } else if (!gestureMultiTouch && !a.moved && (now - a.t0) < 300) {
+        } else if (
+          maxTouchesInGesture === 1 &&
+          (now > multiTouchEndedAt + 150) &&
+          !a.moved &&
+          (now - a.t0) < 270
+        ) {
+          // YALNIZCA bastan sona tek parmak kullanildiysa ve hic kaydirilmadiysa tikla!
           const p = a.p;
           const tx = curX, ty = curY;
           send(0, p, tx, ty);
           setTimeout(() => send(1, p, tx, ty), 40);
+          info.textContent = 'TIK: ' + tx.toFixed(2) + ',' + ty.toFixed(2);
         }
         active.delete(t.identifier);
       }
       idmap.delete(t.identifier);
     }
-    if (e.touches.length === 0) {
-      gestureMultiTouch = false;
+
+    if (areaTouchesRemaining.length === 0) {
+      maxTouchesInGesture = 0;
+      twoFingerPrev = null;
     }
     draw();
     return;
   }
 
+  // 3) AYNA ve KUMANDA Modu parmak birakma
   for (const t of e.changedTouches) {
     const a = active.get(t.identifier); if (!a) continue;
     if (a.kind === 'pad' || a.kind === 'cubuk' || a.kind === 'dugme') {
@@ -644,7 +728,7 @@ function onEnd(e){
 });
 
 modeBtn.addEventListener('click', ()=>{
-  stopContinuousScroll();
+  finishScrollGesture();
   const idx = (MODES.indexOf(mode) + 1) % MODES.length;
   mode = MODES[idx];
   try { localStorage.setItem('m2t_mode', mode); } catch(e) {}
@@ -737,14 +821,13 @@ function drawScrollbars(){
   if (vBarRect) {
     const r = vBarRect;
     cx.fillStyle = '#141b2d';
-    cx.strokeStyle = scroller.active ? '#ff9f43' : '#2a3350';
+    cx.strokeStyle = scroller.down ? '#ff9f43' : '#2a3350';
     cx.lineWidth = 1.5;
     cx.beginPath();
     cx.roundRect(r.x, r.y, r.w, r.h, 10);
     cx.fill();
     cx.stroke();
 
-    // Ust ▲ ve Alt ▼ dugme cizgileri
     cx.strokeStyle = '#2a3350';
     cx.beginPath();
     cx.moveTo(r.x, r.y + r.btnH); cx.lineTo(r.x + r.w, r.y + r.btnH);
@@ -756,11 +839,10 @@ function drawScrollbars(){
     cx.fillText('▲', r.x + r.w/2, r.y + r.btnH/2);
     cx.fillText('▼', r.x + r.w/2, r.y + r.h - r.btnH/2);
 
-    // Orta kaydirma tutamaci (Thumb)
-    const trackY = r.y + r.btnH + 14;
-    const trackH = Math.max(20, r.h - 2 * r.btnH - 28);
+    const trackY = r.y + r.btnH + 16;
+    const trackH = Math.max(20, r.h - 2 * r.btnH - 32);
     const ty = trackY + scroller.thumbV * trackH;
-    cx.fillStyle = scroller.active ? '#ff9f43' : '#2b3b66';
+    cx.fillStyle = scroller.down ? '#ff9f43' : '#2b3b66';
     cx.beginPath();
     cx.roundRect(r.x + 6, ty - 18, r.w - 12, 36, 7);
     cx.fill();
@@ -773,7 +855,7 @@ function drawScrollbars(){
   if (hBarRect) {
     const r = hBarRect;
     cx.fillStyle = '#141b2d';
-    cx.strokeStyle = scroller.active ? '#ff9f43' : '#2a3350';
+    cx.strokeStyle = scroller.down ? '#ff9f43' : '#2a3350';
     cx.lineWidth = 1.5;
     cx.beginPath();
     cx.roundRect(r.x, r.y, r.w, r.h, 10);
@@ -791,10 +873,10 @@ function drawScrollbars(){
     cx.fillText('◀', r.x + r.btnW/2, r.y + r.h/2);
     cx.fillText('▶', r.x + r.w - r.btnW/2, r.y + r.h/2);
 
-    const trackX = r.x + r.btnW + 20;
-    const trackW = Math.max(20, r.w - 2 * r.btnW - 40);
+    const trackX = r.x + r.btnW + 22;
+    const trackW = Math.max(20, r.w - 2 * r.btnW - 44);
     const tx = trackX + scroller.thumbH * trackW;
-    cx.fillStyle = scroller.active ? '#ff9f43' : '#2b3b66';
+    cx.fillStyle = scroller.down ? '#ff9f43' : '#2b3b66';
     cx.beginPath();
     cx.roundRect(tx - 22, r.y + 6, 44, r.h - 12, 7);
     cx.fill();
@@ -809,26 +891,30 @@ function draw(){
   cx.textAlign = 'center'; cx.textBaseline = 'middle';
 
   if (mode === 'imlec') {
-    cx.strokeStyle = scroller.active ? '#ff9f43' : '#2a3350';
+    cx.fillStyle = '#0e131d';
+    cx.fillRect(area.x, area.y, area.w, area.h);
+    cx.strokeStyle = scroller.down ? '#ff9f43' : '#3a4870';
     cx.lineWidth = 2; cx.setLineDash([8,6]);
     cx.strokeRect(area.x, area.y, area.w, area.h); cx.setLineDash([]);
     cx.fillStyle = '#4da3ff'; cx.font = '15px system-ui';
-    cx.fillText('IMLEC ALANI: Kaydirarak imleci tasiyin, dokunarak tiklayin', area.x + area.w/2, area.y + area.h/2 - 14);
+    cx.fillText('DOKUNMA ALANI: Sadece bu cizgili kutu icinde imlec ve tiklama calisir', area.x + area.w/2, area.y + area.h/2 - 14);
     cx.fillStyle = '#5c6b9c'; cx.font = '13px system-ui';
-    cx.fillText('Sayfa kaydirmak icin sag/alt cubugu veya 2 parmagi kullanin', area.x + area.w/2, area.y + area.h/2 + 14);
+    cx.fillText('2 Parmakla veya Sag/Alt Cubukla tiklamadan her yone kaydirin (⇅ ⇄)', area.x + area.w/2, area.y + area.h/2 + 14);
     const px = area.x + curX * area.w, py = area.y + curY * area.h;
-    cx.strokeStyle = scroller.active ? '#ff9f43' : '#4da3ff'; cx.lineWidth = 2;
+    cx.strokeStyle = scroller.down ? '#ff9f43' : '#4da3ff'; cx.lineWidth = 2;
     cx.beginPath(); cx.arc(px, py, 12, 0, Math.PI*2); cx.stroke();
     drawScrollbars();
     return;
   }
 
   if (mode === 'ayna') {
-    cx.strokeStyle = '#2a3350'; cx.lineWidth = 2; cx.setLineDash([8,6]);
+    cx.fillStyle = '#0e131d';
+    cx.fillRect(area.x, area.y, area.w, area.h);
+    cx.strokeStyle = '#3a4870'; cx.lineWidth = 2; cx.setLineDash([8,6]);
     cx.strokeRect(area.x, area.y, area.w, area.h); cx.setLineDash([]);
     cx.fillStyle = '#34406a'; cx.font = '15px system-ui';
-    cx.fillText('AYNA: Dokundugunuz nokta birebir oyuna gider', area.x + area.w/2, area.y + area.h/2 - 10);
-    cx.fillText('(Sag ve alt cubuklarla sayfayi kaydirabilirsiniz)', area.x + area.w/2, area.y + area.h/2 + 18);
+    cx.fillText('AYNA ALANI: Sadece bu cizgili kutu icindeki dokunus oyuna gider', area.x + area.w/2, area.y + area.h/2 - 10);
+    cx.fillText('(Sag ve alt cubuklarla dokunmadan sayfayi kaydirabilirsiniz)', area.x + area.w/2, area.y + area.h/2 + 18);
     drawScrollbars();
     return;
   }
