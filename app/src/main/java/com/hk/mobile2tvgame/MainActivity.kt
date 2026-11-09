@@ -44,7 +44,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad * 2, pad, pad)
         }
-        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.7)" }
+        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.8 - GitHub Otomatik Kumanda)" }
         root.addView(status)
 
         versionEdit = field(root, "scrcpy-server surumu", "5.0.1")
@@ -53,7 +53,7 @@ class MainActivity : Activity() {
         val pickBtn = Button(this).apply { text = "Uygulama sec (yuklu listeden)" }
         pickBtn.setOnClickListener { pickApp() }
         root.addView(pickBtn)
-        kumandaEdit = field(root, "Kumanda sayfasi adresi (https://..., bos = yerlesik)", "")
+        kumandaEdit = field(root, "Ozel kumanda URL (bos = GitHub'dan otomatik ceker)", "")
 
         val permBtn = Button(this).apply { text = "1) Shizuku izni iste" }
         permBtn.setOnClickListener { checkShizuku() }
@@ -67,7 +67,7 @@ class MainActivity : Activity() {
         stopBtn.setOnClickListener { stopStream() }
         root.addView(stopBtn)
 
-        val kumandaBtn = Button(this).apply { text = "4) Kumandayi ac" }
+        val kumandaBtn = Button(this).apply { text = "4) Kumandayi ac (GitHub Otomatik)" }
         kumandaBtn.setOnClickListener {
             startActivity(
                 Intent(this, KumandaActivity::class.java)

@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Kumanda</title>
 <style>
-  :root{--bg:#0b0e14;--line:#2a3350;--acc:#4da3ff;--txt:#cfd8ff}
+  :root{--bg:#0b0e14;--line:#2a3350;--acc:#4da3ff;--warn:#ff9f43;--txt:#cfd8ff}
   html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;touch-action:none;
     -webkit-user-select:none;user-select:none;font-family:system-ui,sans-serif;color:var(--txt)}
   canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
-  #bar{position:fixed;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:10px;align-items:center;z-index:2}
-  #bar button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:14px}
-  #info{font:12px monospace;opacity:.85;min-width:130px;text-align:center}
+  #bar{position:fixed;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;z-index:2;flex-wrap:nowrap;white-space:nowrap}
+  #bar button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:7px 12px;font-size:13px}
+  #bar button.active{border-color:var(--warn);color:var(--warn)}
+  #info{font:12px monospace;opacity:.85;min-width:115px;text-align:center}
   #panel{position:fixed;inset:0;background:rgba(11,14,20,.97);z-index:3;display:none;flex-direction:column;
     padding:10px 16px;box-sizing:border-box}
   #panel .top{display:flex;gap:10px;margin-bottom:10px}
@@ -27,8 +28,11 @@
 <canvas id="cv"></canvas>
 <div id="bar">
   <button id="modeBtn">Mod: IMLEC</button>
+  <button id="editBtn" style="display:none">Tus Hedefi Ayarla</button>
+  <button id="resetBtn" style="display:none">Sifirla</button>
   <button id="appBtn">Uygulamalar</button>
   <button id="backBtn">Geri</button>
+  <button id="syncBtn" title="GitHub'dan Yenile">↻</button>
   <span id="info">-</span>
 </div>
 
@@ -41,28 +45,33 @@
 </div>
 
 <script>
-/* ============ PROFIL (buradan degistirin; APK'yi yeniden derlemek gerekmez) ============
-   Koordinatlar 0..1 araligindadir (sol-ust = 0,0).
-   - x,y,r  : KUMANDA ekranindaki yer (x: ekran genisligi orani, y: ekran yuksekligi orani,
-              r: yaricap, ekran YUKSEKLIGI orani)
-   - oyun   : oyunun KENDI ekran kontrolunun TV'deki yeri. Ogrenmek icin AYNA/IMLEC modunda
-              oyundaki dugmeye dokunun, ustteki sayilari okuyun.
-   - menzil : cubugun oyunda ne kadar uzaga gidecegi (oyun ekran yuksekligi orani)
-   Asagidaki degerler ORNEKTIR; kendi oyununuza gore ayarlanmalidir. */
-const PROFILE = {
-  ad: "Ornek profil",
-  kontroller: [
-    {tip:"cubuk", x:0.14, y:0.66, r:0.17, oyun:{x:0.15, y:0.72}, menzil:0.14},
-    {tip:"dugme", ad:"A", x:0.86, y:0.70, r:0.10, oyun:{x:0.86, y:0.78}},
-    {tip:"dugme", ad:"B", x:0.70, y:0.82, r:0.08, oyun:{x:0.75, y:0.88}}
-  ]
-};
-let TV_ORAN = 16/9;   // TV'deki sanal ekran orani (yayindan otomatik guncellenir)
-/* ================================================================================== */
+/* ============ VARSAYILAN OYUN PROFILI ============ */
+const DEFAULT_CONTROLS = [
+  {tip:"cubuk", ad:"Yon", x:0.16, y:0.65, r:0.18, oyun:{x:0.16, y:0.72}, menzil:0.14},
+  {tip:"dugme", ad:"A",   x:0.86, y:0.68, r:0.10, oyun:{x:0.86, y:0.75}},
+  {tip:"dugme", ad:"B",   x:0.72, y:0.80, r:0.09, oyun:{x:0.74, y:0.85}},
+  {tip:"dugme", ad:"X",   x:0.74, y:0.50, r:0.08, oyun:{x:0.76, y:0.55}},
+  {tip:"dugme", ad:"Y",   x:0.88, y:0.44, r:0.08, oyun:{x:0.88, y:0.50}}
+];
 
+let controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
+try {
+  const savedProfile = localStorage.getItem('m2t_controls_v2');
+  if (savedProfile) {
+    const parsed = JSON.parse(savedProfile);
+    if (Array.isArray(parsed) && parsed.length > 0) controls = parsed;
+  }
+} catch(e) {}
+
+function saveControls(){
+  try { localStorage.setItem('m2t_controls_v2', JSON.stringify(controls)); } catch(e) {}
+}
+
+let TV_ORAN = 16/9;
 const cv = document.getElementById('cv'), cx = cv.getContext('2d');
 const info = document.getElementById('info'), modeBtn = document.getElementById('modeBtn');
-let W=0,H=0,area={x:0,y:0,w:0,h:0};
+const editBtn = document.getElementById('editBtn'), resetBtn = document.getElementById('resetBtn');
+let W=0, H=0, area={x:0,y:0,w:0,h:0};
 const MODES = ['imlec', 'ayna', 'kumanda'];
 let mode = 'imlec';
 try {
@@ -70,9 +79,14 @@ try {
   if (MODES.includes(saved)) mode = saved;
 } catch(e) {}
 
-// Touchpad (IMLEC) modu icin imlec konumu
+// Touchpad (IMLEC) durumu
 let curX = 0.5, curY = 0.5;
-let lastTapTime = 0;
+let scrollState = null; // 2 parmak kaydirma durumu: {sx, sy, lx, ly}
+let gestureMultiTouch = false;
+
+// Kumanda kalibrasyon durumu
+let editMode = false;
+let selectedCtrl = null;
 
 window.setOran = function(w, h) {
   if (w > 0 && h > 0) {
@@ -80,6 +94,21 @@ window.setOran = function(w, h) {
     resize();
   }
 };
+
+function updateTopBar(){
+  modeBtn.textContent = 'Mod: ' + mode.toUpperCase();
+  if (mode === 'kumanda') {
+    editBtn.style.display = 'inline-block';
+    resetBtn.style.display = editMode ? 'inline-block' : 'none';
+    editBtn.classList.toggle('active', editMode);
+    editBtn.textContent = editMode ? 'Kaydet / Bitir' : 'Tus Hedefi Ayarla';
+  } else {
+    editMode = false;
+    selectedCtrl = null;
+    editBtn.style.display = 'none';
+    resetBtn.style.display = 'none';
+  }
+}
 
 function resize(){
   const d = window.devicePixelRatio || 1;
@@ -89,6 +118,7 @@ function resize(){
   let aw = W, ah = W/TV_ORAN;
   if (ah > H) { ah = H; aw = H*TV_ORAN; }
   area = {x:(W-aw)/2, y:(H-ah)/2, w:aw, h:ah};
+  updateTopBar();
   draw();
 }
 addEventListener('resize', resize);
@@ -111,44 +141,99 @@ function pid(t){
 const active = new Map(); // touch.identifier -> durum
 
 function hit(x,y){
-  for (const c of PROFILE.kontroller) {
+  for (const c of controls) {
     const dx = x - c.x*W, dy = y - c.y*H;
     if (Math.hypot(dx,dy) <= c.r*H) return c;
   }
   return null;
 }
 
+function stopTwoFingerScroll(){
+  if (scrollState) {
+    send(1, 0, scrollState.sx, scrollState.sy);
+    scrollState = null;
+  }
+}
+
 function onStart(e){
   e.preventDefault();
   const now = performance.now();
-  for (const t of e.changedTouches) {
-    const x = t.clientX, y = t.clientY;
-    if (mode === 'imlec') {
-      const p = pid(t);
-      // Cift dokunus ve basili tutma = imlec konumundan surukleme (drag)
-      const isDrag = (now - lastTapTime < 280);
-      active.set(t.identifier, {
+
+  if (mode === 'imlec') {
+    if (e.touches.length >= 2) {
+      gestureMultiTouch = true;
+      for (const a of active.values()) {
+        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+        if (a.dragging) { send(1, a.p, curX, curY); a.dragging = false; }
+      }
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const mx = (t0.clientX + t1.clientX) / 2;
+      const my = (t0.clientY + t1.clientY) / 2;
+      if (!scrollState) {
+        const startX = Math.min(0.85, Math.max(0.15, curX));
+        const startY = Math.min(0.85, Math.max(0.15, curY));
+        scrollState = { sx: startX, sy: startY, lx: mx, ly: my };
+        send(0, 0, scrollState.sx, scrollState.sy);
+      } else {
+        scrollState.lx = mx;
+        scrollState.ly = my;
+      }
+      info.textContent = 'KAYDIRMA (2P)';
+      draw();
+      return;
+    }
+
+    gestureMultiTouch = false;
+    for (const t of e.changedTouches) {
+      const x = t.clientX, y = t.clientY, p = pid(t);
+      const state = {
         kind: 'trackpad', p,
         sx: x, sy: y, lx: x, ly: y,
-        t0: now, moved: false, dragging: isDrag
-      });
-      if (isDrag) {
-        send(0, p, curX, curY);
-      } else {
-        send(3, p, curX, curY); // 3 = sadece TV'de imleci goster
-      }
-      info.textContent = curX.toFixed(3)+' , '+curY.toFixed(3);
-    } else if (mode === 'ayna') {
+        t0: now, moved: false, dragging: false, holdTimer: null
+      };
+      state.holdTimer = setTimeout(() => {
+        if (!state.moved && !gestureMultiTouch && active.has(t.identifier)) {
+          state.dragging = true;
+          send(0, state.p, curX, curY);
+          info.textContent = 'SURUKLE: ' + curX.toFixed(2) + ',' + curY.toFixed(2);
+          draw();
+        }
+      }, 380);
+      active.set(t.identifier, state);
+      send(3, p, curX, curY);
+      info.textContent = curX.toFixed(3) + ' , ' + curY.toFixed(3);
+    }
+    draw();
+    return;
+  }
+
+  for (const t of e.changedTouches) {
+    const x = t.clientX, y = t.clientY;
+    if (mode === 'ayna') {
       if (x < area.x || x > area.x+area.w || y < area.y || y > area.y+area.h) continue;
       const nx = (x-area.x)/area.w, ny = (y-area.y)/area.h, p = pid(t);
       active.set(t.identifier, {kind:'pad', p, nx, ny});
       send(0,p,nx,ny);
       info.textContent = nx.toFixed(3)+' , '+ny.toFixed(3);
-    } else {
-      const c = hit(x,y); if (!c) continue;
-      const p = pid(t);
-      active.set(t.identifier, {kind:c.tip, c, p, nx:c.oyun.x, ny:c.oyun.y, kx:0, ky:0});
-      send(0,p,c.oyun.x,c.oyun.y);
+    } else if (mode === 'kumanda') {
+      if (editMode) {
+        const c = hit(x,y);
+        if (c) {
+          selectedCtrl = c;
+          active.set(t.identifier, {kind:'edit_btn', c, lx:x, ly:y});
+          send(3, 0, c.oyun.x, c.oyun.y);
+          info.textContent = c.ad + ' -> ' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2);
+        } else if (selectedCtrl) {
+          active.set(t.identifier, {kind:'edit_target', c:selectedCtrl, lx:x, ly:y});
+          send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
+        }
+      } else {
+        const c = hit(x,y); if (!c) continue;
+        const p = pid(t);
+        active.set(t.identifier, {kind:c.tip, c, p, nx:c.oyun.x, ny:c.oyun.y, kx:0, ky:0});
+        send(0,p,c.oyun.x,c.oyun.y);
+        info.textContent = c.ad + ' (' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2) + ')';
+      }
     }
   }
   draw();
@@ -156,13 +241,45 @@ function onStart(e){
 
 function onMove(e){
   e.preventDefault();
-  for (const t of e.changedTouches) {
-    const a = active.get(t.identifier); if (!a) continue;
-    const x = t.clientX, y = t.clientY;
-    if (a.kind === 'trackpad') {
+
+  if (mode === 'imlec') {
+    if (e.touches.length >= 2 && scrollState) {
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const mx = (t0.clientX + t1.clientX) / 2;
+      const my = (t0.clientY + t1.clientY) / 2;
+      const dx = mx - scrollState.lx;
+      const dy = my - scrollState.ly;
+      scrollState.lx = mx;
+      scrollState.ly = my;
+
+      const scrollSens = 1.15;
+      let nextX = scrollState.sx + (dx / area.w) * scrollSens;
+      let nextY = scrollState.sy + (dy / area.h) * scrollSens;
+
+      if (nextX < 0.06 || nextX > 0.94 || nextY < 0.06 || nextY > 0.94) {
+        send(1, 0, scrollState.sx, scrollState.sy);
+        scrollState.sx = Math.min(0.85, Math.max(0.15, curX));
+        scrollState.sy = Math.min(0.85, Math.max(0.15, curY));
+        send(0, 0, scrollState.sx, scrollState.sy);
+      } else {
+        scrollState.sx = nextX;
+        scrollState.sy = nextY;
+        send(2, 0, scrollState.sx, scrollState.sy);
+      }
+      draw();
+      return;
+    }
+
+    for (const t of e.changedTouches) {
+      const a = active.get(t.identifier); if (!a || a.kind !== 'trackpad') continue;
+      if (gestureMultiTouch) continue;
+      const x = t.clientX, y = t.clientY;
       const dx = x - a.lx, dy = y - a.ly;
       a.lx = x; a.ly = y;
-      if (Math.hypot(x - a.sx, y - a.sy) > 10) a.moved = true;
+      if (Math.hypot(x - a.sx, y - a.sy) > 9) {
+        a.moved = true;
+        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+      }
       const sens = 1.25;
       curX = Math.min(1, Math.max(0, curX + (dx / area.w) * sens));
       curY = Math.min(1, Math.max(0, curY + (dy / area.h) * sens));
@@ -172,7 +289,15 @@ function onMove(e){
         send(3, a.p, curX, curY);
       }
       info.textContent = curX.toFixed(3)+' , '+curY.toFixed(3);
-    } else if (a.kind === 'pad') {
+    }
+    draw();
+    return;
+  }
+
+  for (const t of e.changedTouches) {
+    const a = active.get(t.identifier); if (!a) continue;
+    const x = t.clientX, y = t.clientY;
+    if (a.kind === 'pad') {
       a.nx = (x-area.x)/area.w; a.ny = (y-area.y)/area.h;
       send(2,a.p,a.nx,a.ny);
       info.textContent = Math.min(1,Math.max(0,a.nx)).toFixed(3)+' , '+Math.min(1,Math.max(0,a.ny)).toFixed(3);
@@ -185,6 +310,15 @@ function onMove(e){
       a.nx = c.oyun.x + dx*c.menzil/TV_ORAN;
       a.ny = c.oyun.y + dy*c.menzil;
       send(2,a.p,a.nx,a.ny);
+    } else if (a.kind === 'edit_btn' || a.kind === 'edit_target') {
+      const c = a.c;
+      const dx = x - a.lx, dy = y - a.ly;
+      a.lx = x; a.ly = y;
+      c.oyun.x = Math.min(0.98, Math.max(0.02, c.oyun.x + (dx / area.w)));
+      c.oyun.y = Math.min(0.98, Math.max(0.02, c.oyun.y + (dy / area.h)));
+      saveControls();
+      send(3, 0, c.oyun.x, c.oyun.y);
+      info.textContent = c.ad + ' -> ' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2);
     }
   }
   draw();
@@ -193,20 +327,37 @@ function onMove(e){
 function onEnd(e){
   e.preventDefault();
   const now = performance.now();
+
+  if (mode === 'imlec') {
+    if (scrollState && e.touches.length < 2) {
+      stopTwoFingerScroll();
+    }
+    for (const t of e.changedTouches) {
+      const a = active.get(t.identifier);
+      if (a) {
+        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+        if (a.dragging) {
+          send(1, a.p, curX, curY);
+        } else if (!gestureMultiTouch && !a.moved && (now - a.t0) < 300) {
+          const p = a.p;
+          const tx = curX, ty = curY;
+          send(0, p, tx, ty);
+          setTimeout(() => send(1, p, tx, ty), 40);
+        }
+        active.delete(t.identifier);
+      }
+      idmap.delete(t.identifier);
+    }
+    if (e.touches.length === 0) {
+      gestureMultiTouch = false;
+    }
+    draw();
+    return;
+  }
+
   for (const t of e.changedTouches) {
     const a = active.get(t.identifier); if (!a) continue;
-    if (a.kind === 'trackpad') {
-      if (a.dragging) {
-        send(1, a.p, curX, curY);
-      } else if (!a.moved && (now - a.t0) < 280) {
-        // Kisa dokunus (tap) -> imlecin bulundugu yere tikla!
-        lastTapTime = now;
-        const p = a.p;
-        const tx = curX, ty = curY;
-        send(0, p, tx, ty);
-        setTimeout(() => send(1, p, tx, ty), 35);
-      }
-    } else {
+    if (a.kind === 'pad' || a.kind === 'cubuk' || a.kind === 'dugme') {
       send(1,a.p,a.nx,a.ny);
     }
     active.delete(t.identifier);
@@ -220,27 +371,53 @@ function onEnd(e){
 });
 
 modeBtn.addEventListener('click', ()=>{
+  stopTwoFingerScroll();
   const idx = (MODES.indexOf(mode) + 1) % MODES.length;
   mode = MODES[idx];
   try { localStorage.setItem('m2t_mode', mode); } catch(e) {}
-  modeBtn.textContent = 'Mod: ' + mode.toUpperCase();
   info.textContent = '-';
+  updateTopBar();
   draw();
 });
-modeBtn.textContent = 'Mod: ' + mode.toUpperCase();
+
+editBtn.addEventListener('click', ()=>{
+  editMode = !editMode;
+  if (editMode && !selectedCtrl) selectedCtrl = controls[0];
+  if (editMode && selectedCtrl) {
+    send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
+    info.textContent = selectedCtrl.ad + ' -> ' + selectedCtrl.oyun.x.toFixed(2) + ',' + selectedCtrl.oyun.y.toFixed(2);
+  } else {
+    info.textContent = 'Kaydedildi';
+  }
+  updateTopBar();
+  draw();
+});
+
+resetBtn.addEventListener('click', ()=>{
+  controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
+  saveControls();
+  selectedCtrl = controls[0];
+  info.textContent = 'Varsayilana donuldu';
+  draw();
+});
+
+document.getElementById('syncBtn').addEventListener('click', ()=>{
+  try { if (window.Android && Android.refreshFromGithub) Android.refreshFromGithub(); } catch(e) {}
+});
 
 function draw(){
   cx.fillStyle = '#0b0e14'; cx.fillRect(0,0,W,H);
   cx.textAlign = 'center'; cx.textBaseline = 'middle';
   if (mode === 'imlec') {
-    cx.strokeStyle = '#2a3350'; cx.lineWidth = 2; cx.setLineDash([8,6]);
+    cx.strokeStyle = scrollState ? '#ff9f43' : '#2a3350';
+    cx.lineWidth = 2; cx.setLineDash([8,6]);
     cx.strokeRect(area.x, area.y, area.w, area.h); cx.setLineDash([]);
     cx.fillStyle = '#4da3ff'; cx.font = '16px system-ui';
-    cx.fillText('IMLEC (Touchpad): Kaydirarak imleci tasiyin, dokunarak tiklayin', W/2, H/2 - 14);
-    cx.fillStyle = '#34406a'; cx.font = '14px system-ui';
-    cx.fillText('(Suruklemek icin cift dokunup basili tutun)', W/2, H/2 + 16);
+    cx.fillText('1 Parmak: Imleci Gezdir & Dokunarak Tikla | 2 Parmak: Sayfa Kaydir (Scroll)', W/2, H/2 - 14);
+    cx.fillStyle = '#5c6b9c'; cx.font = '13px system-ui';
+    cx.fillText('(Nesne tasimak/suruklemek icin 1 parmagi 0.4 sn basili tutup kaydirin)', W/2, H/2 + 16);
     const px = area.x + curX * area.w, py = area.y + curY * area.h;
-    cx.strokeStyle = '#4da3ff'; cx.lineWidth = 2;
+    cx.strokeStyle = scrollState ? '#ff9f43' : '#4da3ff'; cx.lineWidth = 2;
     cx.beginPath(); cx.arc(px, py, 12, 0, Math.PI*2); cx.stroke();
     return;
   }
@@ -252,21 +429,33 @@ function draw(){
     cx.fillText('(oyundaki dugmelerin koordinatini ustten okuyun)', W/2, H/2+26);
     return;
   }
-  for (const c of PROFILE.kontroller) {
+  if (editMode) {
+    cx.fillStyle = '#ff9f43'; cx.font = '15px system-ui';
+    cx.fillText('AYAR MODU: Bir tusa dokunun, ardindan parmaginizi kaydirarak TV\'deki mavi imleci oyundaki tusun uzerine getirin', W/2, 54);
+  }
+  for (const c of controls) {
     const px = c.x*W, py = c.y*H, R = c.r*H;
     let st = null;
     for (const a of active.values()) if (a.c === c) st = a;
-    cx.lineWidth = 3;
-    cx.strokeStyle = st ? '#4da3ff' : '#2a3350';
+    const isSel = editMode && selectedCtrl === c;
+    cx.lineWidth = isSel ? 4 : 3;
+    cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : '#2a3350');
     cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.stroke();
     if (c.tip === 'cubuk') {
-      const kx = st ? st.kx : 0, ky = st ? st.ky : 0;
-      cx.fillStyle = st ? '#4da3ff' : '#1d2644';
+      const kx = (st && st.kx) ? st.kx : 0, ky = (st && st.ky) ? st.ky : 0;
+      cx.fillStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : '#1d2644');
       cx.beginPath(); cx.arc(px+kx*R, py+ky*R, R*0.38, 0, Math.PI*2); cx.fill();
     } else {
-      if (st) { cx.fillStyle = 'rgba(77,163,255,.35)'; cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.fill(); }
-      cx.fillStyle = '#cfd8ff'; cx.font = 'bold 22px system-ui';
+      if (st || isSel) {
+        cx.fillStyle = isSel ? 'rgba(255,159,67,.25)' : 'rgba(77,163,255,.35)';
+        cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.fill();
+      }
+      cx.fillStyle = '#cfd8ff'; cx.font = 'bold 20px system-ui';
       cx.fillText(c.ad || '', px, py);
+    }
+    if (editMode) {
+      cx.fillStyle = '#8fa4d4'; cx.font = '11px monospace';
+      cx.fillText(c.oyun.x.toFixed(2)+','+c.oyun.y.toFixed(2), px, py + R + 14);
     }
   }
 }

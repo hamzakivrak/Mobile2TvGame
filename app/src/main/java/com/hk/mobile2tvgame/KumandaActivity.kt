@@ -12,19 +12,25 @@ import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedOutputStream
+import java.io.File
+import java.net.HttpURLConnection
 import java.net.Socket
+import java.net.URL
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
 
 /**
- * Yatay kumanda ekrani. Icerik bir HTML sayfasi (assets/kumanda.html ya da kullanicinin
- * https adresi); sayfa Android.touch(...) ile dokunuslari gonderir, buradan yerel
- * kopru uzerinden (127.0.0.1:27185) yayin surecine, oradan oyuna iletilir.
+ * Yatay kumanda ekrani.
+ * Acildiginda GitHub deposundaki (hamzakivrak/Mobile2TvGame) guncel
+ * app/src/main/assets/kumanda.html dosyasini otomatik ceker ve onbellege kaydeder.
+ * Boylece kumanda.html degistiginde tekrar APK derlemeye gerek kalmaz.
  */
 class KumandaActivity : Activity() {
 
@@ -40,7 +46,14 @@ class KumandaActivity : Activity() {
     @Volatile
     private var lastH = 1080
 
-    private val asset = "file:///android_asset/kumanda.html"
+    private val assetUrl = "file:///android_asset/kumanda.html"
+
+    companion object {
+        private const val GITHUB_API_RAW =
+            "https://api.github.com/repos/hamzakivrak/Mobile2TvGame/contents/app/src/main/assets/kumanda.html"
+        private const val GITHUB_CDN_RAW =
+            "https://raw.githubusercontent.com/hamzakivrak/Mobile2TvGame/main/app/src/main/assets/kumanda.html"
+    }
 
     inner class Bridge {
         @JavascriptInterface
@@ -78,6 +91,12 @@ class KumandaActivity : Activity() {
         fun back() {
             queue.offer("K 0 4\nK 1 4\n")
         }
+
+        /** Kumanda HTML'ini GitHub'dan aninda yeniden ceker. */
+        @JavascriptInterface
+        fun refreshFromGithub() {
+            syncHtmlFromGithub(forceReload = true)
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled", "SourceLockedOrientationActivity")
@@ -96,6 +115,8 @@ class KumandaActivity : Activity() {
         web.setBackgroundColor(Color.BLACK)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
+        web.settings.cacheMode = WebSettings.LOAD_NO_CACHE
+        web.settings.allowFileAccess = true
         web.addJavascriptInterface(Bridge(), "Android")
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
@@ -103,14 +124,80 @@ class KumandaActivity : Activity() {
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame && request.url.toString() != asset) view.loadUrl(asset)
+                if (request.isForMainFrame && request.url.toString() != assetUrl) {
+                    view.loadUrl(assetUrl)
+                }
             }
         }
-        val url = intent.getStringExtra("url")?.trim().orEmpty()
-        web.loadUrl(if (url.startsWith("https://")) url else asset)
         setContentView(web)
 
+        val customUrl = intent.getStringExtra("url")?.trim().orEmpty()
+        if (customUrl.startsWith("https://")) {
+            web.loadUrl(customUrl)
+        } else {
+            val cached = File(filesDir, "kumanda_live.html")
+            if (cached.exists() && cached.length() > 100) {
+                web.loadUrl("file://${cached.absolutePath}")
+            } else {
+                web.loadUrl(assetUrl)
+            }
+            syncHtmlFromGithub(forceReload = false)
+        }
+
         thread(isDaemon = true) { writer() }
+    }
+
+    private fun downloadText(urlStr: String, isApi: Boolean): String? {
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 3500
+                readTimeout = 3500
+                useCaches = false
+                setRequestProperty("Cache-Control", "no-cache, no-store, must-revalidate")
+                setRequestProperty("Pragma", "no-cache")
+                setRequestProperty("User-Agent", "Mobile2TvGame-Android")
+                if (isApi) {
+                    setRequestProperty("Accept", "application/vnd.github.v3.raw")
+                }
+            }
+            if (conn.responseCode == 200) {
+                conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+            } else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            try { conn?.disconnect() } catch (_: Exception) {}
+        }
+    }
+
+    private fun syncHtmlFromGithub(forceReload: Boolean) {
+        thread(isDaemon = true) {
+            val html = downloadText(GITHUB_API_RAW, isApi = true)
+                ?: downloadText("$GITHUB_CDN_RAW?t=${System.currentTimeMillis()}", isApi = false)
+            if (html != null && html.contains("<html") && html.contains("</html>")) {
+                val cached = File(filesDir, "kumanda_live.html")
+                val old = if (cached.exists()) try { cached.readText(Charsets.UTF_8) } catch (_: Exception) { "" } else ""
+                if (forceReload || html != old) {
+                    try {
+                        cached.writeText(html, Charsets.UTF_8)
+                        runOnUiThread {
+                            if (alive) {
+                                web.loadUrl("file://${cached.absolutePath}")
+                                Toast.makeText(this, "GitHub'dan guncel kumanda.html yuklendi", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+            } else if (forceReload) {
+                runOnUiThread {
+                    if (alive) {
+                        Toast.makeText(this, "GitHub'a ulasilamadi, yerel kumanda kullaniliyor", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
     }
 
     private fun writer() {
