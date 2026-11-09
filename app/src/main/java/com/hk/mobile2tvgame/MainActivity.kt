@@ -1,6 +1,7 @@
 package com.hk.mobile2tvgame
 
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.text.InputType
@@ -20,6 +21,7 @@ class MainActivity : Activity() {
     private lateinit var versionEdit: EditText
     private lateinit var displayEdit: EditText
     private lateinit var appEdit: EditText
+    private lateinit var kumandaEdit: EditText
     private lateinit var startBtn: Button
     private lateinit var scroll: ScrollView
 
@@ -42,12 +44,16 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad * 2, pad, pad)
         }
-        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.5)" }
+        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.6)" }
         root.addView(status)
 
         versionEdit = field(root, "scrcpy-server surumu", "5.0.1")
         displayEdit = field(root, "Sanal ekran (GENISLIKxYUKSEKLIK/DPI)", "1920x1080/360")
         appEdit = field(root, "Baslatilacak uygulamanin PAKET adi", "com.android.chrome")
+        val pickBtn = Button(this).apply { text = "Uygulama sec (yuklu listeden)" }
+        pickBtn.setOnClickListener { pickApp() }
+        root.addView(pickBtn)
+        kumandaEdit = field(root, "Kumanda sayfasi adresi (https://..., bos = yerlesik)", "")
 
         val permBtn = Button(this).apply { text = "1) Shizuku izni iste" }
         permBtn.setOnClickListener { checkShizuku() }
@@ -60,6 +66,15 @@ class MainActivity : Activity() {
         val stopBtn = Button(this).apply { text = "3) Durdur" }
         stopBtn.setOnClickListener { stopStream() }
         root.addView(stopBtn)
+
+        val kumandaBtn = Button(this).apply { text = "4) Kumandayi ac" }
+        kumandaBtn.setOnClickListener {
+            startActivity(
+                Intent(this, KumandaActivity::class.java)
+                    .putExtra("url", kumandaEdit.text.toString().trim())
+            )
+        }
+        root.addView(kumandaBtn)
 
         output = TextView(this).apply {
             textSize = 12f
@@ -88,6 +103,28 @@ class MainActivity : Activity() {
         }
         parent.addView(e)
         return e
+    }
+
+    private fun pickApp() {
+        val pm = packageManager
+        val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val list = pm.queryIntentActivities(i, 0)
+            .map { Pair(it.loadLabel(pm).toString(), it.activityInfo.packageName) }
+            .filter { it.second != packageName }
+            .distinctBy { it.second }
+            .sortedBy { it.first.lowercase() }
+        if (list.isEmpty()) {
+            setStatus("Uygulama listesi bos (gorunurluk izni).")
+            return
+        }
+        val names = list.map { "${it.first}  (${it.second})" }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Uygulama sec")
+            .setItems(names) { _, w ->
+                appEdit.setText(list[w].second)
+                setStatus("Secildi: ${list[w].first}")
+            }
+            .show()
     }
 
     private fun setStatus(s: String) {

@@ -7,7 +7,10 @@ import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
+import java.io.OutputStream
+import java.net.InetAddress
 import java.net.NetworkInterface
+import java.nio.ByteBuffer
 import java.net.ServerSocket
 import java.util.zip.ZipFile
 import kotlin.concurrent.thread
@@ -36,6 +39,81 @@ object RelayMain {
 
     @Volatile
     private var beacon = true
+
+    private const val LOCAL_CTL_PORT = 27185
+
+    @Volatile
+    private var ctlOut: OutputStream? = null
+    private val ctlLock = Any()
+
+    @Volatile
+    private var vw = 1920
+
+    @Volatile
+    private var vh = 1080
+
+    @Volatile
+    private var touchLogged = false
+
+    /** scrcpy INJECT_TOUCH_EVENT (tip 2), 32 bayt. action: 0=bas, 1=birak, 2=surukle. nx,ny: 0..1 */
+    private fun sendTouch(action: Int, id: Int, nx: Double, ny: Double) {
+        val o = ctlOut ?: return
+        val x = (nx.coerceIn(0.0, 1.0) * (vw - 1)).toInt()
+        val y = (ny.coerceIn(0.0, 1.0) * (vh - 1)).toInt()
+        val b = ByteBuffer.allocate(32)
+        b.put(2.toByte())
+        b.put(action.toByte())
+        b.putLong(id.toLong())
+        b.putInt(x)
+        b.putInt(y)
+        b.putShort(vw.toShort())
+        b.putShort(vh.toShort())
+        b.putShort(if (action == 1) 0.toShort() else (-1).toShort())
+        b.putInt(0)
+        b.putInt(0)
+        synchronized(ctlLock) {
+            try {
+                o.write(b.array())
+                o.flush()
+                if (!touchLogged) {
+                    touchLogged = true
+                    p("[kumanda] ilk dokunus gonderildi: a=$action id=$id x=$x y=$y")
+                }
+            } catch (e: Exception) {
+                ctlOut = null
+                p("Kontrol yazma hatasi: $e")
+            }
+        }
+    }
+
+    /** Telefon uygulamasindan (kumanda ekrani) gelen satirlari dinler. Sadece 127.0.0.1. */
+    private fun startLocalControl() {
+        thread(isDaemon = true) {
+            try {
+                val ss = ServerSocket(LOCAL_CTL_PORT, 4, InetAddress.getByName("127.0.0.1"))
+                while (true) {
+                    val c = ss.accept()
+                    thread(isDaemon = true) {
+                        try {
+                            c.tcpNoDelay = true
+                            c.getInputStream().bufferedReader().forEachLine { l ->
+                                try {
+                                    val t = l.trim().split(' ')
+                                    if (t.size >= 5 && t[0] == "T") {
+                                        sendTouch(t[1].toInt(), t[2].toInt(), t[3].toDouble(), t[4].toDouble())
+                                    }
+                                } catch (_: Exception) {
+                                }
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                p("Yerel kontrol sunucusu hatasi: $e")
+            }
+        }
+    }
 
     private fun p(s: String) {
         println(s)
@@ -77,6 +155,11 @@ object RelayMain {
             val startApp = args[2]
             val display = args[3]
             val port = args[4].toInt()
+            Regex("""(\d+)x(\d+)""").find(display)?.let {
+                vw = it.groupValues[1].toInt()
+                vh = it.groupValues[2].toInt()
+            }
+            startLocalControl()
 
             val ss = ServerSocket()
             ss.reuseAddress = true
@@ -100,7 +183,7 @@ object RelayMain {
             val cmd = listOf(
                 "/system/bin/app_process", "/", "com.genymobile.scrcpy.Server", version,
                 "scid=$scid", "log_level=info",
-                "audio=false", "control=false",
+                "audio=false", "control=true",
                 "video_codec=h264",
                 "tunnel_forward=true", "send_dummy_byte=true",
                 "new_display=$display"
@@ -134,6 +217,34 @@ object RelayMain {
             }
             if (sock == null) throw IOException("sunucu soketine baglanilamadi (10 sn)")
             val input = sock.inputStream
+
+            // Ikinci baglanti = kontrol kanali (sunucu sirayla kabul eder: video, kontrol)
+            var ctl: LocalSocket? = null
+            val cEnd = System.currentTimeMillis() + 5000
+            while (ctl == null && System.currentTimeMillis() < cEnd) {
+                try {
+                    val s = LocalSocket()
+                    s.connect(LocalSocketAddress("scrcpy_$scid", LocalSocketAddress.Namespace.ABSTRACT))
+                    ctl = s
+                } catch (e: IOException) {
+                    Thread.sleep(200)
+                }
+            }
+            if (ctl == null) {
+                p("UYARI: kontrol soketi acilamadi (kumanda calismaz)")
+            } else {
+                ctlOut = ctl.outputStream
+                val cin = ctl.inputStream
+                thread(isDaemon = true) {
+                    try {
+                        val junk = ByteArray(4096)
+                        while (cin.read(junk) >= 0) {
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                p("Kontrol kanali hazir.")
+            }
 
             // Sanal ekran acilinca uygulamayi orada baslat (ayri is parcacigi)
             if (startApp.isNotBlank()) {
