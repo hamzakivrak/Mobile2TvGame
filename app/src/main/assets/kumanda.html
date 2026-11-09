@@ -12,13 +12,32 @@
   #bar{position:fixed;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:10px;align-items:center;z-index:2}
   #bar button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:14px}
   #info{font:12px monospace;opacity:.85;min-width:130px;text-align:center}
+  #panel{position:fixed;inset:0;background:rgba(11,14,20,.97);z-index:3;display:none;flex-direction:column;
+    padding:10px 16px;box-sizing:border-box}
+  #panel .top{display:flex;gap:10px;margin-bottom:10px}
+  #q{flex:1;background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:16px}
+  #panel .top button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 16px;font-size:15px}
+  #applist{overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;
+    align-content:start;touch-action:pan-y}
+  #applist button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;
+    padding:14px 10px;font-size:15px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
 <canvas id="cv"></canvas>
 <div id="bar">
   <button id="modeBtn">Mod: AYNA</button>
+  <button id="appBtn">Uygulamalar</button>
+  <button id="backBtn">Geri</button>
   <span id="info">-</span>
+</div>
+
+<div id="panel">
+  <div class="top">
+    <input id="q" type="search" placeholder="Uygulama ara...">
+    <button id="closeBtn">Kapat</button>
+  </div>
+  <div id="applist"></div>
 </div>
 
 <script>
@@ -180,6 +199,46 @@ function draw(){
     }
   }
 }
+/* ---------- Uygulama degistirici + Geri ---------- */
+const panel = document.getElementById('panel'), applist = document.getElementById('applist');
+const q = document.getElementById('q');
+let APPS = null;
+function loadApps(){
+  if (APPS) return APPS;
+  try { APPS = JSON.parse((window.Android && Android.apps) ? Android.apps() : '[]'); } catch(e) { APPS = []; }
+  return APPS;
+}
+function getRecent(){ try { return JSON.parse(localStorage.getItem('m2t_recent') || '[]'); } catch(e) { return []; } }
+function pushRecent(c){
+  try { localStorage.setItem('m2t_recent', JSON.stringify([c, ...getRecent().filter(x => x !== c)].slice(0,8))); } catch(e) {}
+}
+function renderApps(){
+  const f = q.value.trim().toLowerCase(), rec = getRecent();
+  const items = loadApps().filter(a => !f || a.n.toLowerCase().includes(f));
+  if (!f) items.sort((a,b) => {
+    const ra = rec.indexOf(a.c), rb = rec.indexOf(b.c);
+    if (ra >= 0 || rb >= 0) { if (ra < 0) return 1; if (rb < 0) return -1; return ra - rb; }
+    return a.n.localeCompare(b.n, 'tr');
+  });
+  applist.textContent = '';
+  for (const a of items) {
+    const b = document.createElement('button');
+    b.textContent = a.n;
+    b.addEventListener('click', () => {
+      pushRecent(a.c);
+      try { Android.launch(a.c); } catch(e) {}
+      panel.style.display = 'none';
+    });
+    applist.appendChild(b);
+  }
+}
+document.getElementById('appBtn').addEventListener('click', () => {
+  q.value = ''; renderApps(); panel.style.display = 'flex';
+});
+document.getElementById('closeBtn').addEventListener('click', () => { panel.style.display = 'none'; });
+q.addEventListener('input', renderApps);
+document.getElementById('backBtn').addEventListener('click', () => { try { Android.back(); } catch(e) {} });
+
 resize();
 </script>
 </body>

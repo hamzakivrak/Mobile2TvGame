@@ -39,6 +39,7 @@ class TvActivity : Activity(), SurfaceHolder.Callback {
 
     private lateinit var statusView: TextView
     private lateinit var surfaceView: SurfaceView
+    private lateinit var cursorView: CursorView
 
     @Volatile
     private var surface: Surface? = null
@@ -55,6 +56,8 @@ class TvActivity : Activity(), SurfaceHolder.Callback {
         root.setBackgroundColor(Color.BLACK)
         surfaceView = SurfaceView(this)
         root.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
+        cursorView = CursorView(this)
+        root.addView(cursorView, FrameLayout.LayoutParams(-1, -1))
         statusView = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 22f
@@ -123,11 +126,34 @@ class TvActivity : Activity(), SurfaceHolder.Callback {
                     s.tcpNoDelay = true
                     s.connect(InetSocketAddress(target.first, target.second), 5000)
                     status("Baglandi, yayin bekleniyor...")
+                    startCursor(target.first)
                     stream(s)
                 }
             } catch (e: Exception) {
                 if (running) status("Hata: ${e.message}")
                 try { Thread.sleep(1500) } catch (_: InterruptedException) {}
+            }
+        }
+    }
+
+    /** Telefonun imlec kanalina (port 27186) baglanir; satir: "C id action x y" */
+    private fun startCursor(host: String) {
+        thread(isDaemon = true) {
+            try {
+                Socket().use { cs ->
+                    cs.connect(InetSocketAddress(host, 27186), 3000)
+                    cs.tcpNoDelay = true
+                    cs.getInputStream().bufferedReader().forEachLine { l ->
+                        try {
+                            val p = l.split(' ')
+                            if (p.size >= 5 && p[0] == "C") {
+                                cursorView.update(p[1].toInt(), p[2].toInt(), p[3].toFloat(), p[4].toFloat())
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            } catch (_: Exception) {
             }
         }
     }

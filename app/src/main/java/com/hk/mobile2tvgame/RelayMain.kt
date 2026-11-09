@@ -55,6 +55,62 @@ object RelayMain {
     @Volatile
     private var touchLogged = false
 
+    private const val CURSOR_PORT = 27186
+
+    @Volatile
+    private var curOut: OutputStream? = null
+    private val curLock = Any()
+
+    /** TV'ye dokunus imleci bilgisi gonderir (ayri baglanti). */
+    private fun startCursorServer() {
+        thread(isDaemon = true) {
+            try {
+                val ss = ServerSocket()
+                ss.reuseAddress = true
+                ss.bind(InetSocketAddress(CURSOR_PORT))
+                while (true) {
+                    val c = ss.accept()
+                    c.tcpNoDelay = true
+                    curOut = c.getOutputStream()
+                }
+            } catch (e: Exception) {
+                p("Imlec sunucusu hatasi: $e")
+            }
+        }
+    }
+
+    private fun sendCursor(action: Int, id: Int, nx: Double, ny: Double) {
+        val o = curOut ?: return
+        try {
+            synchronized(curLock) {
+                o.write("C $id $action $nx $ny\n".toByteArray())
+                o.flush()
+            }
+        } catch (e: Exception) {
+            curOut = null
+        }
+    }
+
+    /** scrcpy INJECT_KEYCODE (tip 0), 14 bayt. action: 0=bas, 1=birak. */
+    private fun sendKey(action: Int, keycode: Int) {
+        val o = ctlOut ?: return
+        val b = ByteBuffer.allocate(14)
+        b.put(0.toByte())
+        b.put(action.toByte())
+        b.putInt(keycode)
+        b.putInt(0)
+        b.putInt(0)
+        synchronized(ctlLock) {
+            try {
+                o.write(b.array())
+                o.flush()
+            } catch (e: Exception) {
+                ctlOut = null
+                p("Kontrol yazma hatasi: $e")
+            }
+        }
+    }
+
     private fun runCmd(vararg c: String): String {
         val pr = ProcessBuilder(*c).redirectErrorStream(true).start()
         val t = pr.inputStream.bufferedReader().readText()
@@ -131,8 +187,22 @@ object RelayMain {
                             c.getInputStream().bufferedReader().forEachLine { l ->
                                 try {
                                     val t = l.trim().split(' ')
-                                    if (t.size >= 5 && t[0] == "T") {
-                                        sendTouch(t[1].toInt(), t[2].toInt(), t[3].toDouble(), t[4].toDouble())
+                                    when {
+                                        t.size >= 5 && t[0] == "T" -> {
+                                            val a = t[1].toInt()
+                                            val id = t[2].toInt()
+                                            val nx = t[3].toDouble()
+                                            val ny = t[4].toDouble()
+                                            sendTouch(a, id, nx, ny)
+                                            sendCursor(a, id, nx, ny)
+                                        }
+                                        t.size >= 2 && t[0] == "A" -> {
+                                            val comp = t[1]
+                                            thread(isDaemon = true) {
+                                                try { launchApp(comp) } catch (e: Exception) { p("am hatasi: $e") }
+                                            }
+                                        }
+                                        t.size >= 3 && t[0] == "K" -> sendKey(t[1].toInt(), t[2].toInt())
                                     }
                                 } catch (_: Exception) {
                                 }
@@ -192,6 +262,7 @@ object RelayMain {
                 vh = it.groupValues[2].toInt()
             }
             startLocalControl()
+            startCursorServer()
 
             val ss = ServerSocket()
             ss.reuseAddress = true

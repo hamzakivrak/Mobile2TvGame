@@ -12,6 +12,10 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.content.pm.ActivityInfo
+import android.content.ComponentName
+import android.content.Intent
+import org.json.JSONArray
+import org.json.JSONObject
 import java.net.Socket
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
@@ -34,6 +38,37 @@ class KumandaActivity : Activity() {
         @JavascriptInterface
         fun touch(action: Int, id: Int, x: Double, y: Double) {
             queue.offer("T $action $id $x $y\n")
+        }
+
+        /** Yuklu (baslatilabilir) uygulamalar: [{"n":ad,"c":"paket/etkinlik"}, ...] */
+        @JavascriptInterface
+        fun apps(): String {
+            val pm = packageManager
+            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val arr = JSONArray()
+            pm.queryIntentActivities(i, 0)
+                .filter { it.activityInfo.packageName != packageName }
+                .distinctBy { it.activityInfo.packageName }
+                .sortedBy { it.loadLabel(pm).toString().lowercase() }
+                .forEach {
+                    arr.put(
+                        JSONObject()
+                            .put("n", it.loadLabel(pm).toString())
+                            .put("c", ComponentName(it.activityInfo.packageName, it.activityInfo.name).flattenToShortString())
+                    )
+                }
+            return arr.toString()
+        }
+
+        /** Sanal ekranda uygulamayi ac / one getir (yayini durdurmadan). */
+        @JavascriptInterface
+        fun launch(comp: String) {
+            if (comp.matches(Regex("[A-Za-z0-9_.$/]+"))) queue.offer("A $comp\n")
+        }
+
+        @JavascriptInterface
+        fun back() {
+            queue.offer("K 0 4\nK 1 4\n")
         }
     }
 
