@@ -2,16 +2,21 @@ package com.hk.mobile2tvgame
 
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
 import java.io.File
 import java.io.IOException
+import java.io.OutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
-import java.net.InetSocketAddress
-import java.io.OutputStream
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
-import java.nio.ByteBuffer
 import java.net.ServerSocket
+import java.nio.ByteBuffer
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.zip.ZipFile
 import kotlin.concurrent.thread
 import kotlin.random.Random
@@ -21,15 +26,19 @@ import kotlin.random.Random
  *
  * Akis:
  *  1. TCP portunu dinler, UDP duyurusu yapar (TV uygulamasi telefonu boylece bulur)
- *  2. TV baglaninca scrcpy-server'i sanal ekran modunda baslatir
+ *  2. TV baglaninca scrcpy-server'i sanal ekran modunda (video + ses + kontrol) baslatir
  *  3. Uygulamayi/oyunu sanal ekranda acar
- *  4. scrcpy akisini (ham) TV'ye aynen iletir
+ *  4. scrcpy video akisini cerceveleyerek (boyut degisimlerini yakalayip) TV'ye iletir
+ *  5. scrcpy ham PCM ses akisini (48kHz 16-bit stereo) port 27187 uzerinden TV'ye iletir
  *
  * args: apkYolu surum baslatilacakPaket ekran tcpPort
  */
 object RelayMain {
 
     private const val BEACON_PORT = 27184
+    private const val LOCAL_CTL_PORT = 27185
+    private const val CURSOR_PORT = 27186
+    private const val AUDIO_PORT = 27187
 
     @Volatile
     private var displayId = -1
@@ -39,8 +48,6 @@ object RelayMain {
 
     @Volatile
     private var beacon = true
-
-    private const val LOCAL_CTL_PORT = 27185
 
     @Volatile
     private var ctlOut: OutputStream? = null
@@ -55,14 +62,34 @@ object RelayMain {
     @Volatile
     private var touchLogged = false
 
-    private const val CURSOR_PORT = 27186
-
     @Volatile
     private var curOut: OutputStream? = null
-    private val curLock = Any()
+    private val curQueue = LinkedBlockingQueue<String>(64)
 
-    /** TV'ye dokunus imleci bilgisi gonderir (ayri baglanti). */
+    @Volatile
+    private var audOut: OutputStream? = null
+    private val audLock = Any()
+
+    private val localClients = CopyOnWriteArrayList<OutputStream>()
+
+    /** TV'ye dokunus imleci bilgisi gonderir (ayri baglanti, engellemeyen kuyruk). */
     private fun startCursorServer() {
+        thread(isDaemon = true) {
+            while (true) {
+                val msg = curQueue.take()
+                val o = curOut ?: continue
+                try {
+                    o.write(msg.toByteArray())
+                    while (true) {
+                        val next = curQueue.poll() ?: break
+                        o.write(next.toByteArray())
+                    }
+                    o.flush()
+                } catch (_: Exception) {
+                    curOut = null
+                }
+            }
+        }
         thread(isDaemon = true) {
             try {
                 val ss = ServerSocket()
@@ -71,7 +98,7 @@ object RelayMain {
                 while (true) {
                     val c = ss.accept()
                     c.tcpNoDelay = true
-                    curOut = c.getOutputStream()
+                    curOut = BufferedOutputStream(c.getOutputStream(), 4096)
                 }
             } catch (e: Exception) {
                 p("Imlec sunucusu hatasi: $e")
@@ -79,15 +106,45 @@ object RelayMain {
         }
     }
 
-    private fun sendCursor(action: Int, id: Int, nx: Double, ny: Double) {
-        val o = curOut ?: return
-        try {
-            synchronized(curLock) {
-                o.write("C $id $action $nx $ny\n".toByteArray())
-                o.flush()
+    /** TV'ye ses akisi gonderir (port 27187, 48kHz 16-bit stereo PCM). */
+    private fun startAudioServer() {
+        thread(isDaemon = true) {
+            try {
+                val ss = ServerSocket()
+                ss.reuseAddress = true
+                ss.bind(InetSocketAddress(AUDIO_PORT))
+                while (true) {
+                    val c = ss.accept()
+                    c.tcpNoDelay = true
+                    synchronized(audLock) {
+                        audOut = BufferedOutputStream(c.getOutputStream(), 16384)
+                    }
+                    p("TV ses kanali baglandi.")
+                }
+            } catch (e: Exception) {
+                p("Ses sunucusu hatasi: $e")
             }
-        } catch (e: Exception) {
-            curOut = null
+        }
+    }
+
+    private fun sendCursor(action: Int, id: Int, nx: Double, ny: Double) {
+        if (curOut == null) return
+        val line = "C $id $action $nx $ny\n"
+        if (!curQueue.offer(line)) {
+            curQueue.poll()
+            curQueue.offer(line)
+        }
+    }
+
+    private fun notifyDisplaySize(w: Int, h: Int) {
+        val msg = "D $w $h\n".toByteArray()
+        for (out in localClients) {
+            try {
+                out.write(msg)
+                out.flush()
+            } catch (_: Exception) {
+                localClients.remove(out)
+            }
         }
     }
 
@@ -122,7 +179,6 @@ object RelayMain {
     private fun launchApp(target: String) {
         var comp = target
         if (!comp.contains('/')) {
-            // Paket adindan baslatici bilesenini bulmayi dene
             try {
                 val r = runCmd(
                     "/system/bin/cmd", "package", "resolve-activity", "--brief",
@@ -146,16 +202,18 @@ object RelayMain {
     /** scrcpy INJECT_TOUCH_EVENT (tip 2), 32 bayt. action: 0=bas, 1=birak, 2=surukle. nx,ny: 0..1 */
     private fun sendTouch(action: Int, id: Int, nx: Double, ny: Double) {
         val o = ctlOut ?: return
-        val x = (nx.coerceIn(0.0, 1.0) * (vw - 1)).toInt()
-        val y = (ny.coerceIn(0.0, 1.0) * (vh - 1)).toInt()
+        val curW = vw
+        val curH = vh
+        val x = (nx.coerceIn(0.0, 1.0) * (curW - 1)).toInt()
+        val y = (ny.coerceIn(0.0, 1.0) * (curH - 1)).toInt()
         val b = ByteBuffer.allocate(32)
         b.put(2.toByte())
         b.put(action.toByte())
         b.putLong(id.toLong())
         b.putInt(x)
         b.putInt(y)
-        b.putShort(vw.toShort())
-        b.putShort(vh.toShort())
+        b.putShort(curW.toShort())
+        b.putShort(curH.toShort())
         b.putShort(if (action == 1) 0.toShort() else (-1).toShort())
         b.putInt(0)
         b.putInt(0)
@@ -165,7 +223,7 @@ object RelayMain {
                 o.flush()
                 if (!touchLogged) {
                     touchLogged = true
-                    p("[kumanda] ilk dokunus gonderildi: a=$action id=$id x=$x y=$y")
+                    p("[kumanda] ilk dokunus gonderildi: a=$action id=$id x=$x y=$y (${curW}x${curH})")
                 }
             } catch (e: Exception) {
                 ctlOut = null
@@ -182,8 +240,13 @@ object RelayMain {
                 while (true) {
                     val c = ss.accept()
                     thread(isDaemon = true) {
+                        var clientOut: OutputStream? = null
                         try {
                             c.tcpNoDelay = true
+                            clientOut = c.getOutputStream()
+                            localClients.add(clientOut)
+                            clientOut.write("D $vw $vh\n".toByteArray())
+                            clientOut.flush()
                             c.getInputStream().bufferedReader().forEachLine { l ->
                                 try {
                                     val t = l.trim().split(' ')
@@ -193,7 +256,9 @@ object RelayMain {
                                             val id = t[2].toInt()
                                             val nx = t[3].toDouble()
                                             val ny = t[4].toDouble()
-                                            sendTouch(a, id, nx, ny)
+                                            if (a in 0..2) {
+                                                sendTouch(a, id, nx, ny)
+                                            }
                                             sendCursor(a, id, nx, ny)
                                         }
                                         t.size >= 2 && t[0] == "A" -> {
@@ -208,6 +273,8 @@ object RelayMain {
                                 }
                             }
                         } catch (_: Exception) {
+                        } finally {
+                            if (clientOut != null) localClients.remove(clientOut)
                         }
                     }
                 }
@@ -245,24 +312,40 @@ object RelayMain {
         }
     }
 
+    private fun connectLocal(scid: String, timeoutMs: Long): LocalSocket? {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            try {
+                val s = LocalSocket()
+                s.connect(LocalSocketAddress("scrcpy_$scid", LocalSocketAddress.Namespace.ABSTRACT))
+                return s
+            } catch (_: IOException) {
+                Thread.sleep(100)
+            }
+        }
+        return null
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         Runtime.getRuntime().addShutdownHook(Thread {
             try { serverProc?.destroy() } catch (_: Throwable) {}
         })
         var sock: LocalSocket? = null
+        var audSock: LocalSocket? = null
         try {
             val apk = args[0]
             val version = args[1]
             val startApp = args[2]
             val display = args[3]
             val port = args[4].toInt()
-            Regex("""(\d+)x(\d+)""").find(display)?.let {
+            Regex("(\\d+)x(\\d+)").find(display)?.let {
                 vw = it.groupValues[1].toInt()
                 vh = it.groupValues[2].toInt()
             }
             startLocalControl()
             startCursorServer()
+            startAudioServer()
 
             val ss = ServerSocket()
             ss.reuseAddress = true
@@ -272,8 +355,9 @@ object RelayMain {
             val tv = ss.accept()
             beacon = false
             tv.tcpNoDelay = true
+            tv.sendBufferSize = 256 * 1024
             p("TV baglandi: ${tv.inetAddress.hostAddress}")
-            val out = tv.getOutputStream()
+            val out = BufferedOutputStream(tv.getOutputStream(), 65536)
 
             val dst = "/data/local/tmp/m2t-scrcpy-server.jar"
             ZipFile(apk).use { z ->
@@ -286,8 +370,10 @@ object RelayMain {
             val cmd = listOf(
                 "/system/bin/app_process", "/", "com.genymobile.scrcpy.Server", version,
                 "scid=$scid", "log_level=info",
-                "audio=false", "control=true",
+                "audio=true", "audio_codec=raw", "audio_source=output",
+                "control=true",
                 "video_codec=h264",
+                "video_bit_rate=12000000", "max_fps=60",
                 "tunnel_forward=true", "send_dummy_byte=true",
                 "new_display=$display"
             )
@@ -301,38 +387,61 @@ object RelayMain {
                 try {
                     proc.inputStream.bufferedReader().forEachLine {
                         p("[sunucu] $it")
-                        val m = Regex("""New display:.*\(id=(\d+)\)""").find(it)
+                        val m = Regex("New display:.*\\(id=(\\d+)\\)").find(it)
                         if (m != null) displayId = m.groupValues[1].toInt()
                     }
                 } catch (_: Exception) {
                 }
             }
 
-            val deadline = System.currentTimeMillis() + 10_000
-            while (sock == null && System.currentTimeMillis() < deadline) {
-                try {
-                    val s = LocalSocket()
-                    s.connect(LocalSocketAddress("scrcpy_$scid", LocalSocketAddress.Namespace.ABSTRACT))
-                    sock = s
-                } catch (e: IOException) {
-                    Thread.sleep(200)
-                }
-            }
-            if (sock == null) throw IOException("sunucu soketine baglanilamadi (10 sn)")
-            val input = sock.inputStream
+            // scrcpy-server baglanti sirasi: 1) video, 2) audio, 3) control
+            sock = connectLocal(scid, 10_000)
+                ?: throw IOException("video soketine baglanilamadi (10 sn)")
+            audSock = connectLocal(scid, 5_000)
+            val ctl = connectLocal(scid, 5_000)
 
-            // Ikinci baglanti = kontrol kanali (sunucu sirayla kabul eder: video, kontrol)
-            var ctl: LocalSocket? = null
-            val cEnd = System.currentTimeMillis() + 5000
-            while (ctl == null && System.currentTimeMillis() < cEnd) {
-                try {
-                    val s = LocalSocket()
-                    s.connect(LocalSocketAddress("scrcpy_$scid", LocalSocketAddress.Namespace.ABSTRACT))
-                    ctl = s
-                } catch (e: IOException) {
-                    Thread.sleep(200)
+            if (audSock != null) {
+                val aIn = DataInputStream(BufferedInputStream(audSock.inputStream, 32768))
+                thread(isDaemon = true) {
+                    try {
+                        val codecHdr = ByteArray(4)
+                        aIn.readFully(codecHdr)
+                        val codecId = ByteBuffer.wrap(codecHdr).int
+                        if (codecId == 0) {
+                            p("UYARI: sunucu ses akisini devre disi birakti.")
+                            return@thread
+                        }
+                        p("Ses kanali hazir (48kHz PCM).")
+                        val fh = ByteArray(12)
+                        var pcmBuf = ByteArray(16384)
+                        while (true) {
+                            aIn.readFully(fh)
+                            val bb = ByteBuffer.wrap(fh)
+                            val flags = bb.getLong(0)
+                            val size = bb.getInt(8)
+                            if (size <= 0 || size > 1_000_000) continue
+                            if (size > pcmBuf.size) pcmBuf = ByteArray(size)
+                            aIn.readFully(pcmBuf, 0, size)
+                            val isConfig = (flags and (1L shl 62)) != 0L
+                            if (!isConfig) {
+                                val ao = audOut
+                                if (ao != null) {
+                                    synchronized(audLock) {
+                                        try {
+                                            ao.write(pcmBuf, 0, size)
+                                            ao.flush()
+                                        } catch (_: Exception) {
+                                            audOut = null
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
                 }
             }
+
             if (ctl == null) {
                 p("UYARI: kontrol soketi acilamadi (kumanda calismaz)")
             } else {
@@ -367,23 +476,46 @@ object RelayMain {
                 }
             }
 
-            // Ham akisi TV'ye aynen ilet
-            val buf = ByteArray(65536)
-            var total = 0L
+            // Video akisini cerceveleyerek oku: oturum paketlerinden guncel vw x vh boyutunu yakala ve TV'ye ilet
+            val inp = DataInputStream(BufferedInputStream(sock.inputStream, 65536))
+            val hdr = ByteArray(69)
+            inp.readFully(hdr)
+            out.write(hdr)
+            out.flush()
+
+            val h = ByteArray(12)
+            var payload = ByteArray(256 * 1024)
+            var total = 69L
             var last = System.currentTimeMillis()
             p("Yayin basladi.")
             while (true) {
-                val n = input.read(buf)
-                if (n < 0) {
-                    p("Sunucu akisi bitti.")
-                    break
+                inp.readFully(h)
+                val bb = ByteBuffer.wrap(h)
+                if ((h[0].toInt() and 0x80) != 0) {
+                    val w = bb.getInt(4)
+                    val ht = bb.getInt(8)
+                    if (w > 0 && ht > 0) {
+                        vw = w
+                        vh = ht
+                        p("[akis] video boyutu: ${vw}x${vh}")
+                        notifyDisplaySize(vw, vh)
+                    }
+                    out.write(h)
+                    out.flush()
+                    total += 12
+                } else {
+                    val size = bb.getInt(8)
+                    if (size < 0 || size > 8_000_000) throw IOException("gecersiz paket boyutu: $size")
+                    if (size > payload.size) payload = ByteArray(size)
+                    inp.readFully(payload, 0, size)
+                    out.write(h)
+                    out.write(payload, 0, size)
+                    out.flush()
+                    total += 12 + size
                 }
-                out.write(buf, 0, n)
-                out.flush()
-                total += n
                 val now = System.currentTimeMillis()
                 if (now - last > 5000) {
-                    p("[akis] toplam ${total / 1024} KB")
+                    p("[akis] toplam ${total / 1024} KB (${vw}x${vh})")
                     last = now
                 }
             }
@@ -392,6 +524,7 @@ object RelayMain {
         } finally {
             beacon = false
             try { sock?.close() } catch (_: Exception) {}
+            try { audSock?.close() } catch (_: Exception) {}
             try { serverProc?.destroy() } catch (_: Exception) {}
         }
         p("BITTI")

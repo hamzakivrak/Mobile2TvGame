@@ -2,6 +2,9 @@ package com.hk.mobile2tvgame
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
@@ -11,11 +14,9 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.content.pm.ActivityInfo
-import android.content.ComponentName
-import android.content.Intent
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedOutputStream
 import java.net.Socket
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
@@ -28,9 +29,16 @@ import kotlin.concurrent.thread
 class KumandaActivity : Activity() {
 
     private val queue = LinkedBlockingQueue<String>()
+    private lateinit var web: WebView
 
     @Volatile
     private var alive = true
+
+    @Volatile
+    private var lastW = 1920
+
+    @Volatile
+    private var lastH = 1080
 
     private val asset = "file:///android_asset/kumanda.html"
 
@@ -63,7 +71,7 @@ class KumandaActivity : Activity() {
         /** Sanal ekranda uygulamayi ac / one getir (yayini durdurmadan). */
         @JavascriptInterface
         fun launch(comp: String) {
-            if (comp.matches(Regex("[A-Za-z0-9_.$/]+"))) queue.offer("A $comp\n")
+            if (comp.matches(Regex("[A-Za-z0-9_.\$/]+"))) queue.offer("A $comp\n")
         }
 
         @JavascriptInterface
@@ -84,12 +92,16 @@ class KumandaActivity : Activity() {
                 or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                 or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
 
-        val web = WebView(this)
+        web = WebView(this)
         web.setBackgroundColor(Color.BLACK)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.addJavascriptInterface(Bridge(), "Android")
         web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                view.evaluateJavascript("if(window.setOran)window.setOran($lastW,$lastH);", null)
+            }
+
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame && request.url.toString() != asset) view.loadUrl(asset)
             }
@@ -102,24 +114,44 @@ class KumandaActivity : Activity() {
     }
 
     private fun writer() {
-        var s: Socket? = null
-        while (alive && s == null) {
+        while (alive) {
+            var s: Socket? = null
             try {
                 s = Socket("127.0.0.1", 27185).also { it.tcpNoDelay = true }
-            } catch (e: Exception) {
-                Thread.sleep(500)
+                val inp = s.getInputStream()
+                thread(isDaemon = true) {
+                    try {
+                        inp.bufferedReader().forEachLine { line ->
+                            val p = line.trim().split(' ')
+                            if (p.size >= 3 && p[0] == "D") {
+                                val w = p[1].toIntOrNull() ?: return@forEachLine
+                                val h = p[2].toIntOrNull() ?: return@forEachLine
+                                lastW = w
+                                lastH = h
+                                runOnUiThread {
+                                    web.evaluateJavascript("if(window.setOran)window.setOran($w,$h);", null)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                val out = BufferedOutputStream(s.getOutputStream(), 4096)
+                while (alive) {
+                    val first = queue.take()
+                    if (!alive) break
+                    if (first.isNotEmpty()) out.write(first.toByteArray())
+                    while (true) {
+                        val next = queue.poll() ?: break
+                        if (next.isNotEmpty()) out.write(next.toByteArray())
+                    }
+                    out.flush()
+                }
+            } catch (_: Exception) {
+                try { Thread.sleep(400) } catch (_: InterruptedException) {}
+            } finally {
+                try { s?.close() } catch (_: Exception) {}
             }
-        }
-        val out = s?.getOutputStream() ?: return
-        try {
-            while (alive) {
-                val line = queue.take()
-                out.write(line.toByteArray())
-                out.flush()
-            }
-        } catch (_: Exception) {
-        } finally {
-            try { s.close() } catch (_: Exception) {}
         }
     }
 
