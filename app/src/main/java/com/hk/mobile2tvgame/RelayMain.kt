@@ -21,24 +21,13 @@ import java.util.zip.ZipFile
 import kotlin.concurrent.thread
 import kotlin.random.Random
 
-/**
- * Shizuku uzerinden "shell" yetkisiyle app_process ile baslatilir.
- *
- * Akis:
- *  1. TCP portunu dinler, UDP duyurusu yapar (TV uygulamasi telefonu boylece bulur)
- *  2. TV baglaninca scrcpy-server'i sanal ekran modunda (video + ses + kontrol) baslatir
- *  3. Uygulamayi/oyunu sanal ekranda acar
- *  4. scrcpy video akisini cerceveleyerek (boyut degisimlerini yakalayip) TV'ye iletir
- *  5. scrcpy ham PCM ses akisini (48kHz 16-bit stereo) port 27187 uzerinden TV'ye iletir
- *
- * args: apkYolu surum baslatilacakPaket ekran tcpPort
- */
 object RelayMain {
 
     private const val BEACON_PORT = 27184
     private const val LOCAL_CTL_PORT = 27185
     private const val CURSOR_PORT = 27186
     private const val AUDIO_PORT = 27187
+    private const val LOCAL_VIDEO_PORT = 27188
 
     @Volatile
     private var displayId = -1
@@ -70,9 +59,23 @@ object RelayMain {
     private var audOut: OutputStream? = null
     private val audLock = Any()
 
+    // Telefonda canli ekran onizlemesi (KumandaActivity SurfaceView) icin yerel video akisi
+    @Volatile
+    private var previewActive = false
+    private val previewQueue = LinkedBlockingQueue<ByteArray>(24)
+    private val previewCacheLock = Any()
+
+    @Volatile
+    private var latestSessionHdr: ByteArray? = null
+
+    @Volatile
+    private var latestConfigPacket: ByteArray? = null
+
+    @Volatile
+    private var latestKeyPacket: ByteArray? = null
+
     private val localClients = CopyOnWriteArrayList<OutputStream>()
 
-    /** TV'ye dokunus imleci bilgisi gonderir (ayri baglanti, engellemeyen kuyruk). */
     private fun startCursorServer() {
         thread(isDaemon = true) {
             while (true) {
@@ -106,7 +109,6 @@ object RelayMain {
         }
     }
 
-    /** TV'ye ses akisi gonderir (port 27187, 48kHz 16-bit stereo PCM). */
     private fun startAudioServer() {
         thread(isDaemon = true) {
             try {
@@ -123,6 +125,53 @@ object RelayMain {
                 }
             } catch (e: Exception) {
                 p("Ses sunucusu hatasi: $e")
+            }
+        }
+    }
+
+    private fun startLocalVideoServer() {
+        thread(isDaemon = true) {
+            try {
+                val ss = ServerSocket(LOCAL_VIDEO_PORT, 2, InetAddress.getByName("127.0.0.1"))
+                while (true) {
+                    val c = ss.accept()
+                    thread(isDaemon = true) {
+                        try {
+                            c.tcpNoDelay = true
+                            c.sendBufferSize = 128 * 1024
+                            val out = BufferedOutputStream(c.getOutputStream(), 32768)
+                            previewQueue.clear()
+                            synchronized(previewCacheLock) {
+                                val sh = latestSessionHdr ?: ByteBuffer.allocate(12).apply {
+                                    put(0, 0x80.toByte())
+                                    putInt(4, vw)
+                                    putInt(8, vh)
+                                }.array()
+                                out.write(sh)
+                                latestConfigPacket?.let { out.write(it) }
+                                latestKeyPacket?.let { out.write(it) }
+                                out.flush()
+                            }
+                            previewActive = true
+                            while (previewActive && !c.isClosed) {
+                                val pkt = previewQueue.take()
+                                out.write(pkt)
+                                while (true) {
+                                    val next = previewQueue.poll() ?: break
+                                    out.write(next)
+                                }
+                                out.flush()
+                            }
+                        } catch (_: Exception) {
+                        } finally {
+                            previewActive = false
+                            previewQueue.clear()
+                            try { c.close() } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                p("Yerel video onizleme sunucusu hatasi: $e")
             }
         }
     }
@@ -148,7 +197,6 @@ object RelayMain {
         }
     }
 
-    /** scrcpy INJECT_KEYCODE (tip 0), 14 bayt. action: 0=bas, 1=birak. */
     private fun sendKey(action: Int, keycode: Int) {
         val o = ctlOut ?: return
         val b = ByteBuffer.allocate(14)
@@ -175,7 +223,6 @@ object RelayMain {
         return t
     }
 
-    /** target: "paket/etkinlik" (tercih edilen) ya da yalnizca paket adi. */
     private fun launchApp(target: String) {
         var comp = target
         if (!comp.contains('/')) {
@@ -199,7 +246,6 @@ object RelayMain {
         runCmd(*cmd.toTypedArray()).lines().filter { it.isNotBlank() }.forEach { p("[am] $it") }
     }
 
-    /** scrcpy INJECT_TOUCH_EVENT (tip 2), 32 bayt. action: 0=bas, 1=birak, 2=surukle. nx,ny: 0..1 */
     private fun sendTouch(action: Int, id: Int, nx: Double, ny: Double) {
         val o = ctlOut ?: return
         val curW = vw
@@ -232,7 +278,6 @@ object RelayMain {
         }
     }
 
-    /** Telefon uygulamasindan (kumanda ekrani) gelen satirlari dinler. Sadece 127.0.0.1. */
     private fun startLocalControl() {
         thread(isDaemon = true) {
             try {
@@ -346,6 +391,7 @@ object RelayMain {
             startLocalControl()
             startCursorServer()
             startAudioServer()
+            startLocalVideoServer()
 
             val ss = ServerSocket()
             ss.reuseAddress = true
@@ -374,6 +420,7 @@ object RelayMain {
                 "control=true",
                 "video_codec=h264",
                 "video_bit_rate=12000000", "max_fps=60",
+                "video_codec_options=i-frame-interval=1",
                 "tunnel_forward=true", "send_dummy_byte=true",
                 "new_display=$display"
             )
@@ -394,7 +441,6 @@ object RelayMain {
                 }
             }
 
-            // scrcpy-server baglanti sirasi: 1) video, 2) audio, 3) control
             sock = connectLocal(scid, 10_000)
                 ?: throw IOException("video soketine baglanilamadi (10 sn)")
             audSock = connectLocal(scid, 5_000)
@@ -458,7 +504,6 @@ object RelayMain {
                 p("Kontrol kanali hazir.")
             }
 
-            // Sanal ekran acilinca uygulamayi orada baslat (ayri is parcacigi)
             if (startApp.isNotBlank()) {
                 thread(isDaemon = true) {
                     val waitEnd = System.currentTimeMillis() + 10_000
@@ -476,7 +521,6 @@ object RelayMain {
                 }
             }
 
-            // Video akisini cerceveleyerek oku: oturum paketlerinden guncel vw x vh boyutunu yakala ve TV'ye ilet
             val inp = DataInputStream(BufferedInputStream(sock.inputStream, 65536))
             val hdr = ByteArray(69)
             inp.readFully(hdr)
@@ -500,10 +544,18 @@ object RelayMain {
                         p("[akis] video boyutu: ${vw}x${vh}")
                         notifyDisplaySize(vw, vh)
                     }
+                    val shCopy = h.clone()
+                    synchronized(previewCacheLock) {
+                        latestSessionHdr = shCopy
+                    }
+                    if (previewActive) {
+                        previewQueue.offer(shCopy)
+                    }
                     out.write(h)
                     out.flush()
                     total += 12
                 } else {
+                    val flags = bb.getLong(0)
                     val size = bb.getInt(8)
                     if (size < 0 || size > 8_000_000) throw IOException("gecersiz paket boyutu: $size")
                     if (size > payload.size) payload = ByteArray(size)
@@ -512,6 +564,31 @@ object RelayMain {
                     out.write(payload, 0, size)
                     out.flush()
                     total += 12 + size
+
+                    val isConfig = (flags and (1L shl 62)) != 0L
+                    val isKey = (flags and (1L shl 61)) != 0L
+                    if (isConfig || isKey || previewActive) {
+                        val pkt = ByteArray(12 + size)
+                        System.arraycopy(h, 0, pkt, 0, 12)
+                        System.arraycopy(payload, 0, pkt, 12, size)
+                        if (isConfig || isKey) {
+                            synchronized(previewCacheLock) {
+                                if (isConfig) latestConfigPacket = pkt
+                                if (isKey) latestKeyPacket = pkt
+                            }
+                        }
+                        if (previewActive) {
+                            if (!previewQueue.offer(pkt)) {
+                                if (isConfig || isKey) {
+                                    previewQueue.clear()
+                                    previewQueue.offer(pkt)
+                                } else {
+                                    previewQueue.poll()
+                                    previewQueue.offer(pkt)
+                                }
+                            }
+                        }
+                    }
                 }
                 val now = System.currentTimeMillis()
                 if (now - last > 5000) {
@@ -523,6 +600,7 @@ object RelayMain {
             p("SONLANDI: $e")
         } finally {
             beacon = false
+            previewActive = false
             try { sock?.close() } catch (_: Exception) {}
             try { audSock?.close() } catch (_: Exception) {}
             try { serverProc?.destroy() } catch (_: Exception) {}

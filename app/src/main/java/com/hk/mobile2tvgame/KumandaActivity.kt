@@ -12,11 +12,16 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.MediaCodec
+import android.media.MediaFormat
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
@@ -25,20 +30,27 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.DataInputStream
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.Socket
 import java.net.URL
+import java.nio.ByteBuffer
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
 
 class KumandaActivity : Activity(), SensorEventListener {
 
     private val queue = LinkedBlockingQueue<String>()
+    private lateinit var rootLayout: FrameLayout
+    private lateinit var previewSurfaceView: SurfaceView
     private lateinit var web: WebView
     private var sensorManager: SensorManager? = null
     private var lastTiltSentMs = 0L
@@ -52,6 +64,20 @@ class KumandaActivity : Activity(), SensorEventListener {
     @Volatile
     private var lastH = 1080
 
+    @Volatile
+    private var previewEnabled = false
+
+    @Volatile
+    private var previewSurface: Surface? = null
+
+    @Volatile
+    private var previewSocket: Socket? = null
+
+    private var previewNx = 0.0
+    private var previewNy = 0.0
+    private var previewNw = 1.0
+    private var previewNh = 1.0
+
     private val assetUrl = "file:///android_asset/kumanda.html"
 
     companion object {
@@ -59,6 +85,54 @@ class KumandaActivity : Activity(), SensorEventListener {
             "https://api.github.com/repos/hamzakivrak/Mobile2TvGame/contents/app/src/main/assets/kumanda.html"
         private const val GITHUB_CDN_RAW =
             "https://raw.githubusercontent.com/hamzakivrak/Mobile2TvGame/main/app/src/main/assets/kumanda.html"
+    }
+
+    private class LocalVideoDecoder(width: Int, height: Int, surface: Surface) {
+        private val codec: MediaCodec = MediaCodec.createDecoderByType("video/avc")
+
+        @Volatile
+        private var active = true
+        private val outThread: Thread
+
+        init {
+            val f = MediaFormat.createVideoFormat("video/avc", width, height)
+            if (Build.VERSION.SDK_INT >= 30) {
+                f.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            }
+            f.setInteger(MediaFormat.KEY_PRIORITY, 0)
+            codec.configure(f, surface, null, 0)
+            codec.start()
+            outThread = thread(isDaemon = true) {
+                val info = MediaCodec.BufferInfo()
+                while (active) {
+                    try {
+                        var i = codec.dequeueOutputBuffer(info, 10_000)
+                        while (i >= 0 && active) {
+                            codec.releaseOutputBuffer(i, info.size > 0)
+                            i = codec.dequeueOutputBuffer(info, 0)
+                        }
+                    } catch (_: Exception) {
+                        if (!active) break
+                    }
+                }
+            }
+        }
+
+        fun feed(data: ByteArray, size: Int, ptsUs: Long, config: Boolean) {
+            val i = codec.dequeueInputBuffer(50_000)
+            if (i < 0) return
+            val buf = codec.getInputBuffer(i) ?: return
+            buf.clear()
+            buf.put(data, 0, size)
+            codec.queueInputBuffer(i, 0, size, ptsUs, if (config) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0)
+        }
+
+        fun release() {
+            active = false
+            try { outThread.join(250) } catch (_: Exception) {}
+            try { codec.stop() } catch (_: Exception) {}
+            try { codec.release() } catch (_: Exception) {}
+        }
     }
 
     inner class Bridge {
@@ -80,6 +154,23 @@ class KumandaActivity : Activity(), SensorEventListener {
                     window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
                     applyImmersiveUi()
                 }
+            }
+        }
+
+        @JavascriptInterface
+        fun setPreviewRect(nx: Double, ny: Double, nw: Double, nh: Double, enabled: Boolean) {
+            previewNx = nx.coerceIn(0.0, 1.0)
+            previewNy = ny.coerceIn(0.0, 1.0)
+            previewNw = nw.coerceIn(0.05, 1.0)
+            previewNh = nh.coerceIn(0.05, 1.0)
+            val wasEnabled = previewEnabled
+            previewEnabled = enabled
+            if (!enabled && wasEnabled) {
+                try { previewSocket?.close() } catch (_: Exception) {}
+            }
+            runOnUiThread {
+                if (!alive) return@runOnUiThread
+                updatePreviewLayout()
             }
         }
 
@@ -118,6 +209,25 @@ class KumandaActivity : Activity(), SensorEventListener {
         }
     }
 
+    private fun updatePreviewLayout() {
+        val rw = rootLayout.width
+        val rh = rootLayout.height
+        if (rw <= 0 || rh <= 0) return
+        if (!previewEnabled) {
+            previewSurfaceView.visibility = View.INVISIBLE
+            return
+        }
+        previewSurfaceView.visibility = View.VISIBLE
+        val left = (previewNx * rw).toInt()
+        val top = (previewNy * rh).toInt()
+        val w = (previewNw * rw).toInt().coerceAtLeast(10)
+        val h = (previewNh * rh).toInt().coerceAtLeast(10)
+        val lp = FrameLayout.LayoutParams(w, h, Gravity.TOP or Gravity.START)
+        lp.leftMargin = left
+        lp.topMargin = top
+        previewSurfaceView.layoutParams = lp
+    }
+
     private fun applyImmersiveUi() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN
@@ -131,20 +241,35 @@ class KumandaActivity : Activity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        // FLAG_NOT_FOCUSABLE: TV sanal ekranina (Display 2) dokunus enjekte edildiginde
-        // Android WindowManagerService'in telefon ekrani (Display 0) ile TV ekrani arasinda
-        // pencere odagi (window focus) ping-pongu yapip WebView dokunuslarini iptal etmesini onler!
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         )
         applyImmersiveUi()
 
+        rootLayout = FrameLayout(this)
+        rootLayout.setBackgroundColor(Color.BLACK)
+
+        previewSurfaceView = SurfaceView(this)
+        previewSurfaceView.visibility = View.INVISIBLE
+        previewSurfaceView.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                previewSurface = holder.surface
+            }
+
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                previewSurface = holder.surface
+            }
+
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                previewSurface = null
+                try { previewSocket?.close() } catch (_: Exception) {}
+            }
+        })
+        rootLayout.addView(previewSurfaceView, FrameLayout.LayoutParams(-1, -1, Gravity.TOP or Gravity.START))
+
         web = object : WebView(this) {
             override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
-                // Sanal ekrana dokunus gittiginde WebView odagi kaybettigini sanirsa
-                // Chromium aktif dokunuslari (joystick/oklar) ACTION_CANCEL (touchcancel) ile keser.
-                // Her zaman true ileterek dokunus akisinin kesilmesini engelliyoruz.
                 super.onWindowFocusChanged(true)
             }
 
@@ -153,8 +278,6 @@ class KumandaActivity : Activity(), SensorEventListener {
                     parent?.requestDisallowInterceptTouchEvent(true)
                 }
                 if (ev.actionMasked == MotionEvent.ACTION_CANCEL) {
-                    // Sistem kaynakli sahte ACTION_CANCEL olayini ACTION_MOVE'a cevirerek
-                    // basili tutulan joystick veya yon oklarinin kopmasini engelle!
                     val count = ev.pointerCount
                     val props = Array(count) { i ->
                         MotionEvent.PointerProperties().also { ev.getPointerProperties(i, it) }
@@ -192,10 +315,13 @@ class KumandaActivity : Activity(), SensorEventListener {
                         systemGestureExclusionRects = listOf(Rect(0, 0, r - l, b - t))
                     } catch (_: Exception) {}
                 }
+                if (changed) {
+                    post { updatePreviewLayout() }
+                }
             }
         }
 
-        web.setBackgroundColor(Color.BLACK)
+        web.setBackgroundColor(Color.TRANSPARENT)
         web.isLongClickable = false
         web.setOnLongClickListener { true }
         web.isHapticFeedbackEnabled = false
@@ -216,7 +342,8 @@ class KumandaActivity : Activity(), SensorEventListener {
                 }
             }
         }
-        setContentView(web)
+        rootLayout.addView(web, FrameLayout.LayoutParams(-1, -1))
+        setContentView(rootLayout)
 
         try {
             sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -236,6 +363,59 @@ class KumandaActivity : Activity(), SensorEventListener {
         }
 
         thread(isDaemon = true) { writer() }
+        thread(isDaemon = true) { previewLoop() }
+    }
+
+    private fun previewLoop() {
+        val h = ByteArray(12)
+        val bb = ByteBuffer.wrap(h)
+        var payload = ByteArray(256 * 1024)
+        while (alive) {
+            if (!previewEnabled || previewSurface == null) {
+                try { Thread.sleep(150) } catch (_: InterruptedException) {}
+                continue
+            }
+            var s: Socket? = null
+            var dec: LocalVideoDecoder? = null
+            try {
+                s = Socket("127.0.0.1", 27188).also {
+                    it.tcpNoDelay = true
+                    it.receiveBufferSize = 128 * 1024
+                }
+                previewSocket = s
+                val inp = DataInputStream(BufferedInputStream(s.getInputStream(), 32768))
+                while (alive && previewEnabled) {
+                    val sf = previewSurface ?: break
+                    inp.readFully(h)
+                    if ((h[0].toInt() and 0x80) != 0) {
+                        val w = bb.getInt(4)
+                        val ht = bb.getInt(8)
+                        if (w > 0 && ht > 0) {
+                            dec?.release()
+                            dec = LocalVideoDecoder(w, ht, sf)
+                        }
+                    } else {
+                        val flags = bb.getLong(0)
+                        val size = bb.getInt(8)
+                        if (size < 0 || size > 8_000_000) throw IOException("gecersiz boyut: $size")
+                        if (size > payload.size) payload = ByteArray(size)
+                        inp.readFully(payload, 0, size)
+                        val config = (flags and (1L shl 62)) != 0L
+                        val pts = flags and ((1L shl 61) - 1)
+                        if (dec == null) {
+                            dec = LocalVideoDecoder(lastW, lastH, sf)
+                        }
+                        dec.feed(payload, size, pts, config)
+                    }
+                }
+            } catch (_: Exception) {
+                try { Thread.sleep(300) } catch (_: InterruptedException) {}
+            } finally {
+                previewSocket = null
+                try { s?.close() } catch (_: Exception) {}
+                try { dec?.release() } catch (_: Exception) {}
+            }
+        }
     }
 
     override fun onResume() {
@@ -364,6 +544,8 @@ class KumandaActivity : Activity(), SensorEventListener {
 
     override fun onDestroy() {
         alive = false
+        previewEnabled = false
+        try { previewSocket?.close() } catch (_: Exception) {}
         queue.offer("")
         super.onDestroy()
     }
