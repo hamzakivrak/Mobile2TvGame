@@ -3,10 +3,20 @@ package com.hk.mobile2tvgame
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.graphics.Rect
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.MotionEvent
+import android.view.Surface
 import android.view.View
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
@@ -26,16 +36,12 @@ import java.net.URL
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
 
-/**
- * Yatay kumanda ekrani.
- * Acildiginda GitHub deposundaki (hamzakivrak/Mobile2TvGame) guncel
- * app/src/main/assets/kumanda.html dosyasini otomatik ceker ve onbellege kaydeder.
- * Boylece kumanda.html degistiginde tekrar APK derlemeye gerek kalmaz.
- */
-class KumandaActivity : Activity() {
+class KumandaActivity : Activity(), SensorEventListener {
 
     private val queue = LinkedBlockingQueue<String>()
     private lateinit var web: WebView
+    private var sensorManager: SensorManager? = null
+    private var lastTiltSentMs = 0L
 
     @Volatile
     private var alive = true
@@ -61,7 +67,22 @@ class KumandaActivity : Activity() {
             queue.offer("T $action $id $x $y\n")
         }
 
-        /** Yuklu (baslatilabilir) uygulamalar: [{"n":ad,"c":"paket/etkinlik"}, ...] */
+        @JavascriptInterface
+        fun hasFocusFix(): Boolean = true
+
+        @JavascriptInterface
+        fun setWindowFocusable(focusable: Boolean) {
+            runOnUiThread {
+                if (!alive) return@runOnUiThread
+                if (focusable) {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                } else {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                    applyImmersiveUi()
+                }
+            }
+        }
+
         @JavascriptInterface
         fun apps(): String {
             val pm = packageManager
@@ -81,7 +102,6 @@ class KumandaActivity : Activity() {
             return arr.toString()
         }
 
-        /** Sanal ekranda uygulamayi ac / one getir (yayini durdurmadan). */
         @JavascriptInterface
         fun launch(comp: String) {
             if (comp.matches(Regex("[A-Za-z0-9_.\$/]+"))) queue.offer("A $comp\n")
@@ -92,27 +112,94 @@ class KumandaActivity : Activity() {
             queue.offer("K 0 4\nK 1 4\n")
         }
 
-        /** Kumanda HTML'ini GitHub'dan aninda yeniden ceker. */
         @JavascriptInterface
         fun refreshFromGithub() {
             syncHtmlFromGithub(forceReload = true)
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled", "SourceLockedOrientationActivity")
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    private fun applyImmersiveUi() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN
                 or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                 or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
+    }
 
-        web = WebView(this)
+    @SuppressLint("SetJavaScriptEnabled", "SourceLockedOrientationActivity", "ClickableViewAccessibility")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        // FLAG_NOT_FOCUSABLE: TV sanal ekranina (Display 2) dokunus enjekte edildiginde
+        // Android WindowManagerService'in telefon ekrani (Display 0) ile TV ekrani arasinda
+        // pencere odagi (window focus) ping-pongu yapip WebView dokunuslarini iptal etmesini onler!
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        )
+        applyImmersiveUi()
+
+        web = object : WebView(this) {
+            override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+                // Sanal ekrana dokunus gittiginde WebView odagi kaybettigini sanirsa
+                // Chromium aktif dokunuslari (joystick/oklar) ACTION_CANCEL (touchcancel) ile keser.
+                // Her zaman true ileterek dokunus akisinin kesilmesini engelliyoruz.
+                super.onWindowFocusChanged(true)
+            }
+
+            override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+                if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                if (ev.actionMasked == MotionEvent.ACTION_CANCEL) {
+                    // Sistem kaynakli sahte ACTION_CANCEL olayini ACTION_MOVE'a cevirerek
+                    // basili tutulan joystick veya yon oklarinin kopmasini engelle!
+                    val count = ev.pointerCount
+                    val props = Array(count) { i ->
+                        MotionEvent.PointerProperties().also { ev.getPointerProperties(i, it) }
+                    }
+                    val coords = Array(count) { i ->
+                        MotionEvent.PointerCoords().also { ev.getPointerCoords(i, it) }
+                    }
+                    val moveEv = MotionEvent.obtain(
+                        ev.downTime,
+                        ev.eventTime,
+                        MotionEvent.ACTION_MOVE,
+                        count,
+                        props,
+                        coords,
+                        ev.metaState,
+                        ev.buttonState,
+                        ev.xPrecision,
+                        ev.yPrecision,
+                        ev.deviceId,
+                        ev.edgeFlags,
+                        ev.source,
+                        ev.flags
+                    )
+                    val handled = super.dispatchTouchEvent(moveEv)
+                    moveEv.recycle()
+                    return handled
+                }
+                return super.dispatchTouchEvent(ev)
+            }
+
+            override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+                super.onLayout(changed, l, t, r, b)
+                if (Build.VERSION.SDK_INT >= 29 && (r - l) > 0 && (b - t) > 0) {
+                    try {
+                        systemGestureExclusionRects = listOf(Rect(0, 0, r - l, b - t))
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
         web.setBackgroundColor(Color.BLACK)
+        web.isLongClickable = false
+        web.setOnLongClickListener { true }
+        web.isHapticFeedbackEnabled = false
+        web.overScrollMode = View.OVER_SCROLL_NEVER
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.cacheMode = WebSettings.LOAD_NO_CACHE
@@ -131,6 +218,10 @@ class KumandaActivity : Activity() {
         }
         setContentView(web)
 
+        try {
+            sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        } catch (_: Exception) {}
+
         val customUrl = intent.getStringExtra("url")?.trim().orEmpty()
         if (customUrl.startsWith("https://")) {
             web.loadUrl(customUrl)
@@ -146,6 +237,35 @@ class KumandaActivity : Activity() {
 
         thread(isDaemon = true) { writer() }
     }
+
+    override fun onResume() {
+        super.onResume()
+        applyImmersiveUi()
+        try {
+            sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
+                sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            }
+        } catch (_: Exception) {}
+    }
+
+    override fun onPause() {
+        try { sensorManager?.unregisterListener(this) } catch (_: Exception) {}
+        super.onPause()
+    }
+
+    override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type != Sensor.TYPE_ACCELEROMETER) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastTiltSentMs < 35L) return
+        lastTiltSentMs = now
+        @Suppress("DEPRECATION")
+        val rot = windowManager.defaultDisplay.rotation
+        val sign = if (rot == Surface.ROTATION_270) -1f else 1f
+        val norm = (event.values[1] * sign) / 6.5f
+        web.evaluateJavascript("if(window.onNativeTilt)window.onNativeTilt($norm);", null)
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun downloadText(urlStr: String, isApi: Boolean): String? {
         var conn: HttpURLConnection? = null
