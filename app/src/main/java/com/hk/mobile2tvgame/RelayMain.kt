@@ -412,6 +412,20 @@ object RelayMain {
                 z.getInputStream(e).use { i -> File(dst).outputStream().use { o -> i.copyTo(o) } }
             }
 
+            // Giris/orta seviye islemciler (orn. Snapdragon 680 - Redmi Pad SE) icin
+            // cozunurluge gore bitrate ve FPS'i otomatik optimize et:
+            val maxDim = maxOf(vw, vh)
+            val bitRate = when {
+                maxDim <= 1366 -> 4_000_000   // 720p: 4 Mbps (Snapdragon 680 ve 2.4GHz Wi-Fi icin cok akici)
+                maxDim <= 1680 -> 6_500_000   // 900p: 6.5 Mbps
+                else -> 10_000_000            // 1080p: 10 Mbps
+            }
+            val maxFps = when {
+                maxDim <= 1366 -> 45
+                maxDim <= 1680 -> 50
+                else -> 60
+            }
+
             val scid = "%08x".format(Random.nextInt(1, 0x7fffffff))
             val cmd = listOf(
                 "/system/bin/app_process", "/", "com.genymobile.scrcpy.Server", version,
@@ -419,7 +433,7 @@ object RelayMain {
                 "audio=true", "audio_codec=raw", "audio_source=output",
                 "control=true",
                 "video_codec=h264",
-                "video_bit_rate=12000000", "max_fps=60",
+                "video_bit_rate=$bitRate", "max_fps=$maxFps",
                 "video_codec_options=i-frame-interval=1",
                 "tunnel_forward=true", "send_dummy_byte=true",
                 "new_display=$display"

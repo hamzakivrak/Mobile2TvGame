@@ -1,8 +1,11 @@
 package com.hk.mobile2tvgame
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.ViewGroup
@@ -39,16 +42,57 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pad = (16 * resources.displayMetrics.density).toInt()
+        val pad = (14 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad * 2, pad, pad)
+            setPadding(pad, pad, pad, pad)
         }
-        status = TextView(this).apply { textSize = 15f; text = "Hazir. (surum 0.8 - GitHub Otomatik Kumanda)" }
+        status = TextView(this).apply { textSize = 14.5f; text = "Hazir. (surum 1.0 - Canli Ekran & Performans Modu)" }
         root.addView(status)
+
+        val guideBtn = Button(this).apply {
+            text = "📖 0) Kurulum Rehberi ve Gereksinimler (Beni Oku)"
+        }
+        guideBtn.setOnClickListener { showSetupGuideDialog() }
+        root.addView(guideBtn)
 
         versionEdit = field(root, "scrcpy-server surumu", "5.0.1")
         displayEdit = field(root, "Sanal ekran (GENISLIKxYUKSEKLIK/DPI)", "1920x1080/360")
+
+        // Cozunurluk / Performans Hazir Profilleri (Tablet ve giris seviyesi cihazlar icin)
+        val presetRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val lpBtn = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        val btn720 = Button(this).apply {
+            text = "⚡ 720p (Tablet/Akici)"
+            textSize = 11f
+            setOnClickListener {
+                displayEdit.setText("1280x720/220")
+                setStatus("720p Akici mod secildi (Redmi Pad SE / giris seviyesi icin onerilir).")
+            }
+        }
+        val btn900 = Button(this).apply {
+            text = "⚖️ 900p (Dengeli)"
+            textSize = 11f
+            setOnClickListener {
+                displayEdit.setText("1600x900/280")
+                setStatus("900p Dengeli mod secildi.")
+            }
+        }
+        val btn1080 = Button(this).apply {
+            text = "💎 1080p (Yuksek)"
+            textSize = 11f
+            setOnClickListener {
+                displayEdit.setText("1920x1080/360")
+                setStatus("1080p Yuksek Kalite mod secildi.")
+            }
+        }
+        presetRow.addView(btn720, lpBtn)
+        presetRow.addView(btn900, lpBtn)
+        presetRow.addView(btn1080, lpBtn)
+        root.addView(presetRow)
+
         appEdit = field(root, "Baslatilacak uygulamanin PAKET adi", "com.android.chrome")
         val pickBtn = Button(this).apply { text = "Uygulama sec (yuklu listeden)" }
         pickBtn.setOnClickListener { pickApp() }
@@ -87,6 +131,58 @@ class MainActivity : Activity() {
         setContentView(root)
 
         Shizuku.addRequestPermissionResultListener(permListener)
+
+        val prefs = getSharedPreferences("m2t_prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("guide_shown", false)) {
+            showSetupGuideDialog(onDismissMarkSeen = true)
+        }
+    }
+
+    private fun showSetupGuideDialog(onDismissMarkSeen: Boolean = false) {
+        val msg = """
+1. SISTEM VE AG GEREKSINIMLERI
+• Telefon/Tablet Android 11 veya uzeri olmalidir.
+• Telefon/Tablet ve TV ayni Wi-Fi agina (tercihen 5 GHz Wi-Fi) bagli olmalidir.
+• TV'ye "M2T TV" (tv-debug.apk), telefona/tablete ise "Mobile2TvGame" (app-debug.apk) kurulmalidir.
+• Redmi Pad SE gibi giris/orta seviye tabletlerde takilma olmamasi icin Sanal Ekran kutusuna "1280x720/220" yazin (veya ⚡ 720p butonuna basin).
+
+2. GELISTIRICI SECENEKLERINI ACMA
+• Ayarlar > Telefon/Tablet Hakkinda menusune girip "Derleme Numarasi" (Xiaomi'de MIUI/HyperOS Surumu) uzerine 7 kez dokunun.
+• Ayarlar > Gelistirici Secenekleri menusunden:
+  - "USB Hata Ayiklama"yi ACIN.
+  - "Kablosuz Hata Ayiklama"yi ACIN.
+
+3. XIAOMI / OPPO / REALME ICIN ZORUNLU DOKUNMA AYARI
+• Xiaomi / Redmi / POCO: Gelistirici Secenekleri altindaki "USB hata ayiklama (Guvenlik ayarlari)" secenegini mutlaka ACIN.
+• Oppo / Realme / OnePlus: Gelistirici Seceneklerinin en altindaki "Izin izlemeyi devre disi birak" secenegini ACIN.
+(Bu ayar acilmazsa goruntu/ses gider ancak ekrana tiklanamaz!)
+
+4. SHIZUKU KURULUMU VE BASLATMA
+• Play Store'dan "Shizuku" uygulamasini kurup acin.
+• "Kablosuz hata ayiklama ile baslat" > "Eslestirme"ye basip, Gelistirici Secenekleri > Kablosuz Hata Ayiklama icinden 6 haneli eslestirme kodunu girin.
+• Shizuku ana ekraninda "Baslat (Start)" dugmesine basip "Shizuku calisiyor" yazisini gorun.
+
+5. YAYINI BASLATMA
+• Bu ekranda "1) Shizuku izni iste"ye basip izin verin.
+• "2) Yayini baslat"a basip TV'deki M2T TV uygulamasini acin.
+• Baglaninca "4) Kumandayi ac" ile dokunmatik imleci ve oyun kumandasini kullanin.
+        """.trimIndent()
+
+        AlertDialog.Builder(this)
+            .setTitle("📖 Kurulum ve Hazirlik Rehberi")
+            .setMessage(msg)
+            .setPositiveButton("Anladim") { _, _ ->
+                if (onDismissMarkSeen) {
+                    getSharedPreferences("m2t_prefs", Context.MODE_PRIVATE)
+                        .edit().putBoolean("guide_shown", true).apply()
+                }
+            }
+            .setNeutralButton("Shizuku Indir (Play Store)") { _, _ ->
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api")))
+                } catch (_: Exception) {}
+            }
+            .show()
     }
 
     override fun onDestroy() {
@@ -118,7 +214,7 @@ class MainActivity : Activity() {
             return
         }
         val names = list.map { "${it.first}  (${it.second})" }.toTypedArray()
-        android.app.AlertDialog.Builder(this)
+        AlertDialog.Builder(this)
             .setTitle("Uygulama sec")
             .setItems(names) { _, w ->
                 appEdit.setText(list[w].second)
@@ -164,7 +260,6 @@ class MainActivity : Activity() {
         val v = versionEdit.text.toString().trim()
         val d = displayEdit.text.toString().trim()
         val a0 = appEdit.text.toString().trim()
-        // Paket adindan baslatici bilesenini (paket/etkinlik) burada bul
         val a = if (a0.isEmpty() || a0.contains('/')) a0 else (
                 try {
                     packageManager.getLaunchIntentForPackage(a0)?.component?.flattenToShortString()
@@ -176,7 +271,6 @@ class MainActivity : Activity() {
         output.text = ""
         thread {
             try {
-                // Shizuku.newProcess ozel (private) oldugu icin yansima ile cagrilir
                 val m = Shizuku::class.java.getDeclaredMethod(
                     "newProcess",
                     Array<String>::class.java, Array<String>::class.java, String::class.java
