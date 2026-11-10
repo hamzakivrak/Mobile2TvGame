@@ -21,7 +21,7 @@
     padding:12px 18px;box-sizing:border-box}
   .modal .top{display:flex;gap:10px;align-items:center;margin-bottom:10px}
   .modal .top h3{margin:0;flex:1;font-size:17px;color:var(--acc)}
-  #q{flex:1;background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:15px}
+  #q{flex:1;background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:15px;-webkit-user-select:text;user-select:text}
   .modal .top button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:13px}
   #applist{overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;
     align-content:start;touch-action:pan-y}
@@ -103,7 +103,15 @@
           <option value="buttons">Ayri Yon Tuslarina Bas (Yaris/Asphalt)</option>
         </select>
       </div>
-      <div class="s-sub">Asphalt gibi "ekrana dokunarak donulen" oyunlarda <b>Ayri Yon Tuslarina Bas</b> secenegini, normal joystickli oyunlarda <b>Sanal Joystick Cek</b> secenegini kullanin.</div>
+      <div class="s-row">
+        <label for="selFocusLock">TV Baglantisinda Kopma Korumasi</label>
+        <select id="selFocusLock">
+          <option value="auto">Otomatik ( Tavsiye Edilen )</option>
+          <option value="on">Her Zaman Acik (Odak Kilidi)</option>
+          <option value="off">Kapali (Sadece Yeni APK)</option>
+        </select>
+      </div>
+      <div class="s-sub">TV baglandiginda Android'in pencere odagini TV sanal ekranina tasiyip WebView dokunusunu kesmesini (3-5 denemede bir tutma sorununu) tamamen onler.</div>
       <div class="s-row">
         <label>Direksiyon Hassasiyeti: <span id="lblTiltSens">1.5x</span></label>
         <input id="rngTiltSens" type="range" min="0.6" max="3.0" step="0.2" value="1.5">
@@ -204,7 +212,7 @@
     <div class="g-box">
       <h4>5. Oyun Kolu (Mod: KUMANDA) Secenekleri: Joystick, Oklar ve Direksiyon</h4>
       <ul>
-        <li><b>🕹️ Analog Joystick:</b> 5-adimli yumusak yakalama (ramp) ve 40ms canli sinyal ile oyundaki joystick'i ilk basista yakalar ve parmaginizi cekene kadar asla birakmaz.</li>
+        <li><b>🕹️ Analog Joystick:</b> TV baglandiginda pencere odagi degisiminden dolayi dokunusun kopmasini onleyen Odak Kilidi ile ilk dokunusta %100 yakalar ve parmaginizi cekene kadar birakmaz.</li>
         <li><b>➕ Yon Oklari (Alt / Ust / Sol / Sag):</b> Ust bardaki <b>"Sol: ..."</b> dugmesine basarak gecilir. Oklarin uzerine basili tuttugunuzda kesintisiz basar.</li>
         <li><b>🛞 Direksiyon Modu:</b> Direksiyon simidinin uzerinden parmaginizi saga/sola cevirerek (veya yeni APK ile telefonu saga/sola egerek) araci kesintisiz yonlendirebilirsiniz!</li>
       </ul>
@@ -221,6 +229,8 @@
 addEventListener('contextmenu', e => e.preventDefault(), {passive:false});
 addEventListener('selectstart', e => e.preventDefault(), {passive:false});
 
+const HAS_NATIVE_FOCUS_FIX = !!(window.Android && typeof Android.hasFocusFix === 'function' && Android.hasFocusFix());
+
 /* ============ KULLANICI AYARLARI ============ */
 const DEFAULT_SETTINGS = {
   vBar: true,
@@ -232,17 +242,25 @@ const DEFAULT_SETTINGS = {
   barSize: 56,
   leftStyle: 'joystick',   // 'joystick' | 'dpad' | 'wheel'
   steerTarget: 'analog',   // 'analog' | 'buttons'
+  focusLock: 'auto',       // 'auto' | 'on' | 'off'
   tiltSens: 1.5
 };
 
 let CFG = Object.assign({}, DEFAULT_SETTINGS);
 try {
-  const s = JSON.parse(localStorage.getItem('m2t_cfg_v3') || '{}');
+  const s = JSON.parse(localStorage.getItem('m2t_cfg_v4') || localStorage.getItem('m2t_cfg_v3') || '{}');
   CFG = Object.assign({}, DEFAULT_SETTINGS, s);
 } catch(e) {}
 
 function saveCfg(){
-  try { localStorage.setItem('m2t_cfg_v3', JSON.stringify(CFG)); } catch(e) {}
+  try { localStorage.setItem('m2t_cfg_v4', JSON.stringify(CFG)); } catch(e) {}
+}
+
+function isFocusLockEnabled(){
+  if (CFG.focusLock === 'on') return true;
+  if (CFG.focusLock === 'off') return false;
+  // 'auto': Eger eski APK kullaniliyorsa (FLAG_NOT_FOCUSABLE yoksa) otomatik Odak Kilidi ac!
+  return !HAS_NATIVE_FOCUS_FIX;
 }
 
 /* ============ VARSAYILAN OYUN PROFILI ============ */
@@ -305,11 +323,11 @@ let twoFingerPrev = null;
 let editMode = false;
 let selectedCtrl = null;
 
-// Direksiyon durumu (hem dokunmatik cevirme hem ivmeolcer sensoru ile calisir!)
+// Direksiyon durumu
 let wheelState = {
   active: false,
   touchControlled: false,
-  angle: 0,            // -1.0 (tam sol) .. +1.0 (tam sag)
+  angle: 0,
   rawAngle: 0,
   calibOffset: 0,
   hasSensor: false
@@ -317,10 +335,257 @@ let wheelState = {
 
 window.setOran = function(w, h) {
   if (w > 0 && h > 0) {
-    TV_ORAN = w / h;
-    resize();
+    const newOran = w / h;
+    if (Math.abs(newOran - TV_ORAN) > 0.001) {
+      TV_ORAN = newOran;
+      computeLayout();
+      draw();
+    }
   }
 };
+
+function send(a,id,nx,ny){
+  nx = Math.min(1, Math.max(0, nx)); ny = Math.min(1, Math.max(0, ny));
+  try { if (window.Android) Android.touch(a,id,nx,ny); } catch(e) {}
+}
+
+/* ============ ODAK KILIDI (FOCUS-LOCK ANCHOR) & KESINTISIZ JOYSTICK MOTORU ============
+   Neden TV baglandiktan sonra (Chrome veya Asphalt acikken) joystick/oklar 3-5 denemede bir
+   tutuyor ve ilk dokunusta hemen birakiyordu?
+   Sebep:
+   TV baglandiginda scrcpy-server 2. bir ekran (VirtualDisplay / Display 2) olusturur.
+   Kullanici telefon ekranina (Display 0) dokundugunda Android pencere odagini Display 0'a verir;
+   hemen ardindan Display 2'ye ilk dokunus (ACTION_DOWN, 0 -> 1 parmak) gonderildiginde
+   Android InputDispatcher (onPointerDownOutsideFocusLocked) pencere odagini Display 2'ye geri alir!
+   KumandaActivity (WebView) pencere odagini kaybettiginde (onWindowFocusChanged(false)),
+   Chromium WebView aktif dokunusu aninda ACTION_CANCEL (touchcancel) ile iptal eder!
+
+   Cozum (Cift Katmanli):
+   1. Yeni APK'da (KumandaActivity.kt): FLAG_NOT_FOCUSABLE + onWindowFocusChanged(true) + ACTION_CANCEL
+      kalkani ile WebView odagi asla kaybetmez.
+   2. Sadece HTML guncelleyenler icin (Odak Kilidi):
+      Mod: KUMANDA'ya gecildiginde (parmak ekranda degilken!) JOY_PID=0 (veya ANCHOR_PID=8)
+      onceden TV ekranina basili (armed) hale getirilir. Boylece kullanici parmagini telefon ekranina
+      koydugunda TV'ye yeni bir ACTION_DOWN (0->1) degil, yalnizca ACTION_MOVE (veya 2. parmak
+      ACTION_POINTER_DOWN) gider. Android InputDispatcher ACTION_MOVE ve ACTION_POINTER_DOWN
+      olaylarinda pencere odagini ASLA degistirmez, WebView ASLA touchcancel uretmez! */
+
+const JOY_PID = 0;
+const ANCHOR_PID = 8;
+const SCROLL_PID = 9;
+
+let anchorState = {
+  joyArmed: false,
+  topArmed: false,
+  jx: 0.18,
+  jy: 0.72,
+  armTimer: null
+};
+
+function isAnyModalOpen(){
+  return (
+    document.getElementById('panel').style.display === 'flex' ||
+    document.getElementById('settingsModal').style.display === 'flex' ||
+    document.getElementById('guideModal').style.display === 'flex'
+  );
+}
+
+function disarmFocusAnchor(){
+  if (anchorState.armTimer) { clearTimeout(anchorState.armTimer); anchorState.armTimer = null; }
+  if (anchorState.joyArmed) {
+    send(1, JOY_PID, anchorState.jx, anchorState.jy);
+    anchorState.joyArmed = false;
+  }
+  if (anchorState.topArmed) {
+    send(1, ANCHOR_PID, 0.50, 0.001);
+    anchorState.topArmed = false;
+  }
+}
+
+function syncFocusAnchor(){
+  if (anchorState.armTimer) { clearTimeout(anchorState.armTimer); anchorState.armTimer = null; }
+  if (mode !== 'kumanda' || editMode || isAnyModalOpen() || !isFocusLockEnabled()) {
+    disarmFocusAnchor();
+    return;
+  }
+  // Parmak ekranda degilken 50ms sonra odagi TV ekranina kilitleyen baslangic dokunusunu kur
+  anchorState.armTimer = setTimeout(() => {
+    anchorState.armTimer = null;
+    if (mode !== 'kumanda' || editMode || isAnyModalOpen() || !isFocusLockEnabled()) return;
+    if (CFG.steerTarget === 'analog') {
+      if (anchorState.topArmed) {
+        send(1, ANCHOR_PID, 0.50, 0.001);
+        anchorState.topArmed = false;
+      }
+      const joy = getJoyCtrl();
+      anchorState.jx = joy.oyun.x;
+      anchorState.jy = joy.oyun.y;
+      if (!anchorState.joyArmed) {
+        send(0, JOY_PID, anchorState.jx, anchorState.jy);
+        anchorState.joyArmed = true;
+      }
+    } else {
+      if (anchorState.joyArmed) {
+        send(1, JOY_PID, anchorState.jx, anchorState.jy);
+        anchorState.joyArmed = false;
+      }
+      if (!anchorState.topArmed) {
+        send(0, ANCHOR_PID, 0.50, 0.001);
+        anchorState.topArmed = true;
+      }
+    }
+  }, 50);
+}
+
+function isJoyPointerActivelyMoved(){
+  for (const a of active.values()) {
+    if (a.p === JOY_PID && (a.kind === 'cubuk' || a.kind === 'yon_ok' || a.kind === 'wheel_touch')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+let jitterToggle = 1;
+setInterval(() => {
+  if (mode !== 'kumanda' || editMode) return;
+  jitterToggle = -jitterToggle;
+  const eps = 0.0004 * jitterToggle;
+
+  for (const a of active.values()) {
+    if (a.ramping) continue;
+    if (a.kind === 'cubuk' || a.kind === 'dugme' || a.kind === 'yon_ok' || a.kind === 'wheel_touch') {
+      if (a.kind === 'wheel_touch' && CFG.steerTarget === 'buttons' && !a.heldSide) continue;
+      send(2, a.p, a.nx + eps, a.ny);
+    }
+  }
+
+  // Odak kilidi aktifken ve parmak joystick uzerinde degilken merkez/anchor noktasini canli tut
+  if (anchorState.joyArmed && !isJoyPointerActivelyMoved()) {
+    const joy = getJoyCtrl();
+    anchorState.jx = joy.oyun.x;
+    anchorState.jy = joy.oyun.y;
+    send(2, JOY_PID, anchorState.jx + eps, anchorState.jy);
+  }
+  if (anchorState.topArmed) {
+    send(2, ANCHOR_PID, 0.50 + eps, 0.001);
+  }
+}, 35);
+
+/** Merkez (startX, startY) noktasindan (targetX, targetY) noktasina 5 ara adimla puruzsuz kaydirir */
+function startSmoothAnalogHold(state, startX, startY, targetX, targetY){
+  if (state.rampTimer) { clearInterval(state.rampTimer); state.rampTimer = null; }
+  state.nx = targetX;
+  state.ny = targetY;
+
+  // Eger JOY_PID zaten Odak Kilidi ile basiliysa YENI ACTION_DOWN GONDERME (odak degismesin!),
+  // dogrudan ACTION_MOVE (2) ile merkezden hedefe kaydir!
+  if (state.p === JOY_PID && anchorState.joyArmed) {
+    send(2, JOY_PID, startX, startY);
+  } else {
+    send(0, state.p, startX, startY);
+    if (state.p === JOY_PID && isFocusLockEnabled() && CFG.steerTarget === 'analog') {
+      anchorState.joyArmed = true;
+      anchorState.jx = startX;
+      anchorState.jy = startY;
+    }
+  }
+
+  const dist = Math.hypot(targetX - startX, targetY - startY);
+  if (dist < 0.008) {
+    state.ramping = false;
+    return;
+  }
+  state.ramping = true;
+  const steps = 5;
+  let step = 0;
+  state.rampTimer = setInterval(() => {
+    if (active.get(state.id) !== state) {
+      clearInterval(state.rampTimer);
+      state.rampTimer = null;
+      return;
+    }
+    step++;
+    const t = step / steps;
+    const curPosX = startX + (state.nx - startX) * t;
+    const curPosY = startY + (state.ny - startY) * t;
+    send(2, state.p, curPosX, curPosY);
+    if (step >= steps) {
+      clearInterval(state.rampTimer);
+      state.rampTimer = null;
+      state.ramping = false;
+    }
+  }, 9);
+}
+
+function releaseAnalogPointer(state){
+  if (state.p === JOY_PID && isFocusLockEnabled() && CFG.steerTarget === 'analog' && mode === 'kumanda' && !editMode) {
+    // Odak kilidi acikken parmagi cekince ACTION_UP gonderip odagi bozmak yerine
+    // sanal joystick'i merkeze (0,0 notr konuma) geri cek!
+    const joy = getJoyCtrl();
+    anchorState.joyArmed = true;
+    anchorState.jx = joy.oyun.x;
+    anchorState.jy = joy.oyun.y;
+    send(2, JOY_PID, joy.oyun.x, joy.oyun.y);
+  } else {
+    send(1, state.p, state.nx, state.ny);
+    if (state.p === JOY_PID) anchorState.joyArmed = false;
+  }
+}
+
+/* ============ DIREKSIYON (DOKUNMATIK SIMIT + SENSOR) MOTORU ============ */
+window.onNativeTilt = function(normTilt) {
+  if (mode !== 'kumanda' || CFG.leftStyle !== 'wheel' || editMode) return;
+  wheelState.hasSensor = true;
+  wheelState.rawAngle = normTilt;
+  if (wheelState.active && !wheelState.touchControlled) {
+    const clamped = Math.min(1, Math.max(-1, (normTilt - wheelState.calibOffset) * CFG.tiltSens));
+    wheelState.angle = wheelState.angle * 0.6 + clamped * 0.4;
+    updateWheelTouchTarget();
+    draw();
+  }
+};
+
+addEventListener('devicemotion', (e) => {
+  if (mode !== 'kumanda' || CFG.leftStyle !== 'wheel' || editMode) return;
+  const ag = e.accelerationIncludingGravity;
+  if (!ag || (ag.x === null && ag.y === null)) return;
+  const orient = (window.screen && screen.orientation && typeof screen.orientation.angle === 'number')
+    ? screen.orientation.angle
+    : (window.orientation || 90);
+  const sign = (orient === 270 || orient === -90) ? -1 : 1;
+  const norm = ((ag.y || 0) * sign) / 6.5;
+  window.onNativeTilt(norm);
+}, true);
+
+function updateWheelTouchTarget(){
+  for (const a of active.values()) {
+    if (a.kind === 'wheel_touch') {
+      const joy = getJoyCtrl();
+      if (CFG.steerTarget === 'analog') {
+        a.nx = joy.oyun.x + (wheelState.angle * joy.menzil) / TV_ORAN;
+        a.ny = joy.oyun.y;
+        if (!a.ramping) send(2, a.p, a.nx, a.ny);
+      } else {
+        const leftBtn = getDpadCtrls().find(c => c.yon === 'L');
+        const rightBtn = getDpadCtrls().find(c => c.yon === 'R');
+        const wantSide = (wheelState.angle < -0.12) ? 'L' : ((wheelState.angle > 0.12) ? 'R' : null);
+        if (wantSide !== a.heldSide) {
+          if (a.heldSide) send(1, a.p, a.nx, a.ny);
+          a.heldSide = wantSide;
+          if (wantSide === 'L' && leftBtn) {
+            a.nx = leftBtn.oyun.x; a.ny = leftBtn.oyun.y;
+            send(0, a.p, a.nx, a.ny);
+          } else if (wantSide === 'R' && rightBtn) {
+            a.nx = rightBtn.oyun.x; a.ny = rightBtn.oyun.y;
+            send(0, a.p, a.nx, a.ny);
+          }
+        }
+      }
+      info.textContent = 'DIREKSIYON: ' + (wheelState.angle >= 0 ? '+' : '') + (wheelState.angle * 60).toFixed(0) + '°';
+    }
+  }
+}
 
 function updateTopBar(){
   modeBtn.textContent = 'Mod: ' + mode.toUpperCase();
@@ -338,6 +603,7 @@ function updateTopBar(){
     editBtn.style.display = 'none';
     resetBtn.style.display = 'none';
   }
+  syncFocusAnchor();
 }
 
 function computeLayout(){
@@ -381,125 +647,7 @@ function resize(){
 }
 addEventListener('resize', resize);
 
-function send(a,id,nx,ny){
-  nx = Math.min(1, Math.max(0, nx)); ny = Math.min(1, Math.max(0, ny));
-  try { if (window.Android) Android.touch(a,id,nx,ny); } catch(e) {}
-}
-
-/* ============ 5-ADIMLI YUMUSAK YAKALAMA (SMOOTH RAMP) & CANLI TUTMA MOTORU ============
-   Neden oyunda joystick/oklara ilk basista bazen tutmuyordu ve basili tutunca birakiyordu?
-   1. Oyun motorlari (Unity/Unreal/Asphalt) sanal joystick merkezine ACTION_DOWN aldiktan sonra
-      tek karede 150 piksel uzaga isinlanan parmagi "gecersiz sicrama" sayip reddeder;
-      oysa merkezden hedefe 5 ara adimla (8ms arayla %20->%40->%60->%80->%100) kaydirildiginda
-      oyun parmagi %100 yakalar!
-   2. Parmak sabit tutuldugunda Android InputDispatcher veya oyun motoru hareketsiz parmagi
-      uykuya atmasin diye her 35ms'de bir 1 piksellik mikro-titresimle (jitter) ACTION_MOVE gonderilir! */
-let jitterToggle = 1;
-setInterval(() => {
-  if (mode !== 'kumanda' || editMode) return;
-  jitterToggle = -jitterToggle;
-  const eps = 0.0005 * jitterToggle;
-  for (const a of active.values()) {
-    if (a.ramping) continue; // 5-adimli baslangic gecisi sirasinda araya girme
-    if (a.kind === 'cubuk' || a.kind === 'dugme' || a.kind === 'yon_ok' || a.kind === 'wheel_touch') {
-      send(2, a.p, a.nx + eps, a.ny);
-    }
-  }
-}, 35);
-
-/** Merkez (startX, startY) noktasindan (targetX, targetY) noktasina 5 ara adimla puruzsuz kaydirir */
-function startSmoothAnalogHold(state, startX, startY, targetX, targetY){
-  if (state.rampTimer) { clearInterval(state.rampTimer); state.rampTimer = null; }
-  state.nx = targetX;
-  state.ny = targetY;
-  const dist = Math.hypot(targetX - startX, targetY - startY);
-  send(0, state.p, startX, startY);
-  if (dist < 0.008) {
-    state.ramping = false;
-    return;
-  }
-  state.ramping = true;
-  const steps = 5;
-  let step = 0;
-  state.rampTimer = setInterval(() => {
-    if (active.get(state.id) !== state) {
-      clearInterval(state.rampTimer);
-      state.rampTimer = null;
-      return;
-    }
-    step++;
-    const t = step / steps;
-    // Hedef kullanici tarafindan suruklenerek guncellenmisse guncel state.nx/ny'ye dogru ilerle
-    const curX = startX + (state.nx - startX) * t;
-    const curY = startY + (state.ny - startY) * t;
-    send(2, state.p, curX, curY);
-    if (step >= steps) {
-      clearInterval(state.rampTimer);
-      state.rampTimer = null;
-      state.ramping = false;
-    }
-  }, 9);
-}
-
-/* ============ DIREKSIYON (DOKUNMATIK SIMIT + SENSOR) MOTORU ============
-   Direksiyon hem parmaginizi simit uzerinde saga/sola cevirerek (%100 her cihazda calisir!),
-   hem de telefon egim sensoru (varsa) ile calisir! */
-window.onNativeTilt = function(normTilt) {
-  if (mode !== 'kumanda' || CFG.leftStyle !== 'wheel' || editMode) return;
-  wheelState.hasSensor = true;
-  wheelState.rawAngle = normTilt;
-  if (wheelState.active && !wheelState.touchControlled) {
-    const clamped = Math.min(1, Math.max(-1, (normTilt - wheelState.calibOffset) * CFG.tiltSens));
-    wheelState.angle = wheelState.angle * 0.6 + clamped * 0.4;
-    updateWheelTouchTarget();
-    draw();
-  }
-};
-
-addEventListener('devicemotion', (e) => {
-  if (mode !== 'kumanda' || CFG.leftStyle !== 'wheel' || editMode) return;
-  const ag = e.accelerationIncludingGravity;
-  if (!ag || (ag.x === null && ag.y === null)) return;
-  const orient = (window.screen && screen.orientation && typeof screen.orientation.angle === 'number')
-    ? screen.orientation.angle
-    : (window.orientation || 90);
-  const sign = (orient === 270 || orient === -90) ? -1 : 1;
-  const norm = ((ag.y || 0) * sign) / 6.5;
-  window.onNativeTilt(norm);
-}, true);
-
-function updateWheelTouchTarget(){
-  for (const a of active.values()) {
-    if (a.kind === 'wheel_touch') {
-      const joy = getJoyCtrl();
-      if (CFG.steerTarget === 'analog') {
-        a.nx = joy.oyun.x + (wheelState.angle * joy.menzil) / TV_ORAN;
-        a.ny = joy.oyun.y;
-        if (!a.ramping) send(2, a.p, a.nx, a.ny);
-      } else {
-        // Yaris (Ayri Sol/Sag Tuslar) modu:
-        const leftBtn = getDpadCtrls().find(c => c.yon === 'L');
-        const rightBtn = getDpadCtrls().find(c => c.yon === 'R');
-        const wantSide = (wheelState.angle < -0.12) ? 'L' : ((wheelState.angle > 0.12) ? 'R' : null);
-        if (wantSide !== a.heldSide) {
-          if (a.heldSide) send(1, a.p, a.nx, a.ny);
-          a.heldSide = wantSide;
-          if (wantSide === 'L' && leftBtn) {
-            a.nx = leftBtn.oyun.x; a.ny = leftBtn.oyun.y;
-            send(0, a.p, a.nx, a.ny);
-          } else if (wantSide === 'R' && rightBtn) {
-            a.nx = rightBtn.oyun.x; a.ny = rightBtn.oyun.y;
-            send(0, a.p, a.nx, a.ny);
-          }
-        }
-      }
-      info.textContent = 'DIREKSIYON: ' + (wheelState.angle >= 0 ? '+' : '') + (wheelState.angle * 60).toFixed(0) + '°';
-    }
-  }
-}
-
 /* ============ KESINTISIZ CIFT YONLU + SINIRDA/DISARIDA OTOMATIK KAYDIRMA MOTORU ============ */
-const SCROLL_PID = 9;
 let scroller = {
   down: false,
   resetting: false,
@@ -638,8 +786,9 @@ function triggerSmoothSwipe(dirX, dirY){
 const idmap = new Map();
 function pid(t){
   if (!idmap.has(t.identifier)) {
-    const used = new Set(idmap.values()); let n = 0;
-    while (used.has(n)) n++;
+    const used = new Set(idmap.values());
+    let n = 1; // 0 = JOY_PID, 8 = ANCHOR_PID, 9 = SCROLL_PID
+    while (used.has(n) || n === ANCHOR_PID || n === SCROLL_PID) n++;
     idmap.set(t.identifier, n);
   }
   return idmap.get(t.identifier);
@@ -676,7 +825,6 @@ function hitGamepadControl(x, y){
     }
   }
   if (best) return best;
-  // Sol yariya dokunuldugunda joystick veya direksiyon modundaysa dogrudan yakala
   if (!editMode && (CFG.leftStyle === 'joystick' || CFG.leftStyle === 'wheel') && x < W * 0.45 && y > 55) {
     return getJoyCtrl();
   }
@@ -872,9 +1020,7 @@ function onStart(e){
         }
       } else {
         const c = hitGamepadControl(x,y); if (!c) continue;
-        const p = pid(t);
         if (c.tip === 'cubuk' && CFG.leftStyle === 'wheel') {
-          // Direksiyon Modu: Hem parmakla simidi saga/sola cevirme hem sensor egimi!
           const R = c.r * H;
           const initSteer = Math.min(1, Math.max(-1, ((x - c.x * W) / R) * CFG.tiltSens));
           wheelState.calibOffset = wheelState.rawAngle;
@@ -882,6 +1028,8 @@ function onStart(e){
           wheelState.touchControlled = (Math.abs(initSteer) > 0.08 || !wheelState.hasSensor);
           wheelState.angle = wheelState.touchControlled ? initSteer : 0;
 
+          const useJoyPid = (CFG.steerTarget === 'analog');
+          const p = useJoyPid ? JOY_PID : pid(t);
           const st = {
             id: t.identifier, kind: 'wheel_touch', c, p,
             sx: x, sy: y,
@@ -907,16 +1055,16 @@ function onStart(e){
           const targetY = c.oyun.y + (dy * c.menzil);
 
           const st = {
-            id: t.identifier, kind: 'cubuk', c, p,
+            id: t.identifier, kind: 'cubuk', c, p: JOY_PID,
             nx: targetX, ny: targetY, kx: dx, ky: dy,
             ramping: false, rampTimer: null
           };
           active.set(t.identifier, st);
-          // 5 adimli yumusak yakalama ile oyunun joystick'i %100 yakalamasini garantile!
           startSmoothAnalogHold(st, c.oyun.x, c.oyun.y, targetX, targetY);
           info.textContent = 'JOYSTICK';
         } else if (c.tip === 'yon_ok') {
           const pos = getDpadTargetPos(c);
+          const p = pos.fromCenter ? JOY_PID : pid(t);
           const st = {
             id: t.identifier, kind: 'yon_ok', c, p,
             nx: pos.x, ny: pos.y,
@@ -930,6 +1078,7 @@ function onStart(e){
           }
           info.textContent = 'OK: ' + c.ad;
         } else {
+          const p = pid(t);
           active.set(t.identifier, {id: t.identifier, kind:'dugme', c, p, nx:c.oyun.x, ny:c.oyun.y, ramping:false});
           send(0,p,c.oyun.x,c.oyun.y);
           info.textContent = c.ad + ' (' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2) + ')';
@@ -1065,9 +1214,8 @@ function onMove(e){
       send(2,a.p,a.nx,a.ny);
       info.textContent = Math.min(1,Math.max(0,a.nx)).toFixed(3)+' , '+Math.min(1,Math.max(0,a.ny)).toFixed(3);
     } else if (a.kind === 'wheel_touch') {
-      // Direksiyon uzerinde parmak kaydirildiginda simidi cevir!
       const c = a.c, R = c.r * H;
-      if (Math.abs(x - a.sx) > 5 || !wheelState.hasSensor) {
+      if (Math.abs(x - a.sx) > 4 || !wheelState.hasSensor) {
         wheelState.touchControlled = true;
         wheelState.angle = Math.min(1, Math.max(-1, ((x - c.x * W) / R) * CFG.tiltSens));
         updateWheelTouchTarget();
@@ -1087,13 +1235,14 @@ function onMove(e){
     } else if (a.kind === 'yon_ok') {
       const hovered = getDpadCtrls().find(dc => Math.hypot(x - dc.x*W, y - dc.y*H) <= dc.r*H*1.15);
       if (hovered && hovered !== a.c) {
+        const oldNx = a.nx, oldNy = a.ny;
         a.c = hovered;
         const pos = getDpadTargetPos(hovered);
         a.nx = pos.x; a.ny = pos.y;
         if (pos.fromCenter) {
           send(2, a.p, pos.x, pos.y);
         } else {
-          send(1, a.p, a.nx, a.ny);
+          send(1, a.p, oldNx, oldNy);
           send(0, a.p, pos.x, pos.y);
         }
         info.textContent = 'OK: ' + hovered.ad;
@@ -1173,21 +1322,35 @@ function onEnd(e){
       wheelState.active = false;
       wheelState.touchControlled = false;
       wheelState.angle = 0;
-      if (CFG.steerTarget === 'analog' || a.heldSide) {
+      if (CFG.steerTarget === 'analog') {
+        releaseAnalogPointer(a);
+      } else if (a.heldSide) {
         send(1, a.p, a.nx, a.ny);
       }
-    } else if (a.kind === 'pad' || a.kind === 'cubuk' || a.kind === 'dugme' || a.kind === 'yon_ok') {
+    } else if (a.kind === 'cubuk') {
+      releaseAnalogPointer(a);
+    } else if (a.kind === 'yon_ok') {
+      if (CFG.steerTarget === 'analog') {
+        releaseAnalogPointer(a);
+      } else {
+        send(1, a.p, a.nx, a.ny);
+      }
+    } else if (a.kind === 'pad' || a.kind === 'dugme') {
       send(1,a.p,a.nx,a.ny);
     }
     active.delete(t.identifier);
     idmap.delete(t.identifier);
   }
+  if (mode === 'kumanda' && active.size === 0) {
+    syncFocusAnchor();
+  }
   draw();
 }
 
-['touchstart','touchmove','touchend','touchcancel'].forEach((n,i)=>{
-  cv.addEventListener(n, [onStart,onMove,onEnd,onEnd][i], {passive:false});
-});
+cv.addEventListener('touchstart', onStart, {passive:false});
+cv.addEventListener('touchmove', onMove, {passive:false});
+cv.addEventListener('touchend', onEnd, {passive:false});
+cv.addEventListener('touchcancel', onEnd, {passive:false});
 
 modeBtn.addEventListener('click', ()=>{
   finishScrollGesture();
@@ -1212,11 +1375,13 @@ editBtn.addEventListener('click', ()=>{
   editMode = !editMode;
   const vis = getVisibleGamepadControls();
   if (editMode) {
+    disarmFocusAnchor();
     selectedCtrl = vis[0];
     send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
     info.textContent = selectedCtrl.ad + ' -> ' + selectedCtrl.oyun.x.toFixed(2) + ',' + selectedCtrl.oyun.y.toFixed(2);
   } else {
     info.textContent = 'Kaydedildi';
+    syncFocusAnchor();
   }
   updateTopBar();
   draw();
@@ -1239,12 +1404,14 @@ const guideModal = document.getElementById('guideModal');
 const chkHideGuide = document.getElementById('chkHideGuide');
 
 function openGuide(){
+  disarmFocusAnchor();
   try { chkHideGuide.checked = (localStorage.getItem('m2t_hide_guide') === '1'); } catch(e) {}
   guideModal.style.display = 'flex';
 }
 function closeGuide(){
   try { localStorage.setItem('m2t_hide_guide', chkHideGuide.checked ? '1' : '0'); } catch(e) {}
   guideModal.style.display = 'none';
+  syncFocusAnchor();
 }
 
 document.getElementById('helpBtn').addEventListener('click', openGuide);
@@ -1265,6 +1432,7 @@ const chkTwoFinger = document.getElementById('chkTwoFinger');
 const selScrollDir = document.getElementById('selScrollDir');
 const selLeftStyle = document.getElementById('selLeftStyle');
 const selSteerTarget = document.getElementById('selSteerTarget');
+const selFocusLock = document.getElementById('selFocusLock');
 const rngTiltSens = document.getElementById('rngTiltSens');
 const lblTiltSens = document.getElementById('lblTiltSens');
 const rngScrollSpeed = document.getElementById('rngScrollSpeed');
@@ -1280,6 +1448,7 @@ function syncSettingsUI(){
   selScrollDir.value = CFG.scrollDir || 'wheel';
   selLeftStyle.value = CFG.leftStyle || 'joystick';
   selSteerTarget.value = CFG.steerTarget || 'analog';
+  selFocusLock.value = CFG.focusLock || 'auto';
   rngTiltSens.value = CFG.tiltSens || 1.5;
   lblTiltSens.textContent = Number(CFG.tiltSens || 1.5).toFixed(1) + 'x';
   rngScrollSpeed.value = CFG.scrollSpeed;
@@ -1291,6 +1460,7 @@ function syncSettingsUI(){
 }
 
 document.getElementById('setBtn').addEventListener('click', ()=>{
+  disarmFocusAnchor();
   syncSettingsUI();
   settingsModal.style.display = 'flex';
 });
@@ -1302,6 +1472,7 @@ document.getElementById('closeSetBtn').addEventListener('click', ()=>{
   CFG.scrollDir = selScrollDir.value;
   CFG.leftStyle = selLeftStyle.value;
   CFG.steerTarget = selSteerTarget.value;
+  CFG.focusLock = selFocusLock.value;
   CFG.tiltSens = parseFloat(rngTiltSens.value);
   CFG.scrollSpeed = parseFloat(rngScrollSpeed.value);
   CFG.curSpeed = parseFloat(rngCurSpeed.value);
@@ -1547,16 +1718,30 @@ function renderApps(){
     b.textContent = a.n;
     b.addEventListener('click', () => {
       pushRecent(a.c);
+      try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
       try { Android.launch(a.c); } catch(e) {}
       panel.style.display = 'none';
+      syncFocusAnchor();
     });
     applist.appendChild(b);
   }
 }
+q.addEventListener('focus', () => {
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(true); } catch(e) {}
+});
+q.addEventListener('blur', () => {
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
+});
 document.getElementById('appBtn').addEventListener('click', () => {
+  disarmFocusAnchor();
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(true); } catch(e) {}
   q.value = ''; renderApps(); panel.style.display = 'flex';
 });
-document.getElementById('closeBtn').addEventListener('click', () => { panel.style.display = 'none'; });
+document.getElementById('closeBtn').addEventListener('click', () => {
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
+  panel.style.display = 'none';
+  syncFocusAnchor();
+});
 q.addEventListener('input', renderApps);
 document.getElementById('backBtn').addEventListener('click', () => { try { Android.back(); } catch(e) {} });
 
