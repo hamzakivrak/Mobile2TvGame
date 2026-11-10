@@ -7,14 +7,18 @@
 <style>
   :root{--bg:#0b0e14;--line:#2a3350;--acc:#4da3ff;--warn:#ff9f43;--ok:#2ecc71;--txt:#cfd8ff}
   *{box-sizing:border-box;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
-  html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;touch-action:none;
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;touch-action:none;
     font-family:system-ui,sans-serif;color:var(--txt)}
   canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
-  #bar{position:fixed;top:6px;left:50%;transform:translateX(-50%);display:flex;gap:5px;align-items:center;z-index:2;flex-wrap:nowrap;white-space:nowrap}
-  #bar button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:6px 9px;font-size:12.5px}
+  #bar{position:fixed;top:4px;left:50%;transform:translateX(-50%);display:flex;gap:4px;align-items:center;z-index:2;
+    flex-wrap:nowrap;white-space:nowrap;background:rgba(11,14,20,.78);padding:3px 6px;border-radius:11px;border:1px solid rgba(42,51,80,.7)}
+  #bar button{background:rgba(24,32,58,.9);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px}
   #bar button.active{border-color:var(--warn);color:var(--warn)}
+  #bar button.on-btn{border-color:var(--ok);color:var(--ok);background:rgba(20,52,38,.9)}
   #bar button.help-btn{border-color:var(--acc);color:#fff;background:#1d3566;font-weight:600}
-  #info{font:11px monospace;opacity:.85;min-width:90px;text-align:center}
+  #bar.collapsed > *:not(#minBarBtn){display:none !important}
+  #bar.collapsed{left:8px;transform:none;padding:2px}
+  #info{font:10.5px monospace;opacity:.85;min-width:76px;text-align:center}
 
   /* Uygulamalar, Ayarlar ve Rehber Panelleri */
   .modal{position:fixed;inset:0;background:rgba(11,14,20,.97);z-index:5;display:none;flex-direction:column;
@@ -57,8 +61,10 @@
 <canvas id="cv"></canvas>
 
 <div id="bar">
+  <button id="minBarBtn" title="Ust Cubugu Kucult/Buyut">▲</button>
   <button id="helpBtn" class="help-btn">📖 Beni Oku</button>
   <button id="modeBtn">Mod: IMLEC</button>
+  <button id="previewBtn">📺 Ekran</button>
   <button id="ctrlStyleBtn" style="display:none">Sol: 🕹️ Joystick</button>
   <button id="editBtn" style="display:none">Tus Hedefi</button>
   <button id="resetBtn" style="display:none">Sifirla</button>
@@ -81,10 +87,32 @@
 <!-- Ayarlar Paneli -->
 <div id="settingsModal" class="modal">
   <div class="top">
-    <h3>Kumanda, Oyun Kolu ve Kaydirma Ayarlari</h3>
+    <h3>Kumanda, Canli Ekran ve Oyun Kolu Ayarlari</h3>
     <button id="closeSetBtn">Kaydet & Kapat</button>
   </div>
   <div class="settings-grid">
+    <!-- Canli Ekran ve Ayna Ayarlari -->
+    <div class="s-card">
+      <h4>📺 Canli Ekran Onizleme & Ayna</h4>
+      <div class="s-row">
+        <label for="chkShowScreen">Telefonda Oyun / Program Ekranini Goster</label>
+        <input id="chkShowScreen" type="checkbox">
+      </div>
+      <div class="s-sub">Acildiginda TV'deki oyun/program telefon ekraninda da canli gorunur; <b>Mod: AYNA</b> ile ekranda nereye dokunursaniz dogrudan orasi tiklanir!</div>
+      <div class="s-row">
+        <label for="chkFullArea">Imlec ve Ayna Ekranin Tamamini Kaplasin</label>
+        <input id="chkFullArea" type="checkbox">
+      </div>
+      <div class="s-row">
+        <label for="chkHybridTap">KUMANDA Modunda Bos Yere Dokununca Oyuna Tikla</label>
+        <input id="chkHybridTap" type="checkbox">
+      </div>
+      <div class="s-row">
+        <label>KUMANDA Arkaplan Karartma: <span id="lblScreenDim">%20</span></label>
+        <input id="rngScreenDim" type="range" min="0" max="0.7" step="0.05" value="0.20">
+      </div>
+    </div>
+
     <!-- Oyun Kolu (KUMANDA) Ayarlari -->
     <div class="s-card">
       <h4>🎮 Oyun Kolu (Mod: KUMANDA)</h4>
@@ -103,15 +131,7 @@
           <option value="buttons">Ayri Yon Tuslarina Bas (Yaris/Asphalt)</option>
         </select>
       </div>
-      <div class="s-row">
-        <label for="selFocusLock">TV Baglantisinda Kopma Korumasi</label>
-        <select id="selFocusLock">
-          <option value="auto">Otomatik ( Tavsiye Edilen )</option>
-          <option value="on">Her Zaman Acik (Odak Kilidi)</option>
-          <option value="off">Kapali (Sadece Yeni APK)</option>
-        </select>
-      </div>
-      <div class="s-sub">TV baglandiginda Android'in pencere odagini TV sanal ekranina tasiyip WebView dokunusunu kesmesini (3-5 denemede bir tutma sorununu) tamamen onler.</div>
+      <div class="s-sub">Asphalt gibi "ekrana dokunarak donulen" oyunlarda <b>Ayri Yon Tuslarina Bas</b> secenegini, normal joystickli oyunlarda <b>Sanal Joystick Cek</b> secenegini kullanin.</div>
       <div class="s-row">
         <label>Direksiyon Hassasiyeti: <span id="lblTiltSens">1.5x</span></label>
         <input id="rngTiltSens" type="range" min="0.6" max="3.0" step="0.2" value="1.5">
@@ -154,8 +174,8 @@
         <input id="rngCurSpeed" type="range" min="0.6" max="2.6" step="0.1" value="1.3">
       </div>
       <div class="s-row">
-        <label>Cubuk Genisligi: <span id="lblBarSize">56px</span></label>
-        <input id="rngBarSize" type="range" min="40" max="84" step="4" value="56">
+        <label>Cubuk Genisligi: <span id="lblBarSize">52px</span></label>
+        <input id="rngBarSize" type="range" min="36" max="80" step="4" value="52">
       </div>
     </div>
   </div>
@@ -210,11 +230,11 @@
     </div>
 
     <div class="g-box">
-      <h4>5. Oyun Kolu (Mod: KUMANDA) Secenekleri: Joystick, Oklar ve Direksiyon</h4>
+      <h4>5. Canli Ekran (📺 Ekran), Ayna ve Oyun Kolu (KUMANDA) Kullanimi</h4>
       <ul>
-        <li><b>🕹️ Analog Joystick:</b> TV baglandiginda pencere odagi degisiminden dolayi dokunusun kopmasini onleyen Odak Kilidi ile ilk dokunusta %100 yakalar ve parmaginizi cekene kadar birakmaz.</li>
-        <li><b>➕ Yon Oklari (Alt / Ust / Sol / Sag):</b> Ust bardaki <b>"Sol: ..."</b> dugmesine basarak gecilir. Oklarin uzerine basili tuttugunuzda kesintisiz basar.</li>
-        <li><b>🛞 Direksiyon Modu:</b> Direksiyon simidinin uzerinden parmaginizi saga/sola cevirerek (veya yeni APK ile telefonu saga/sola egerek) araci kesintisiz yonlendirebilirsiniz!</li>
+        <li><b>📺 Ekran (Canli Onizleme):</b> Ust bardaki <b>"📺 Ekran"</b> butonuna (veya Ayarlar'a) basarak TV'deki oyun/programi telefon ekraninda da canli gorebilirsiniz!</li>
+        <li><b>Mod: AYNA (Dogrudan Dokunmatik):</b> <b>📺 Ekran</b> acikken oyunun veya programin neresine dokunursaniz dogrudan orasi aktif olur. Sol ustteki <b>▲</b> dugmesiyle ust cubugu kucultebilirsiniz.</li>
+        <li><b>Mod: KUMANDA (🕹️ Joystick / ➕ Oklar / 🛞 Direksiyon):</b> Parmağinizi bastiginiz anda yakalar, parmaginizi cektiginiz anda aninda birakir.</li>
       </ul>
     </div>
   </div>
@@ -225,42 +245,35 @@
 </div>
 
 <script>
-// Uzun basmada Android WebView'in secim veya sag-tik menusu acip dokunusu iptal etmesini engelle!
 addEventListener('contextmenu', e => e.preventDefault(), {passive:false});
 addEventListener('selectstart', e => e.preventDefault(), {passive:false});
 
-const HAS_NATIVE_FOCUS_FIX = !!(window.Android && typeof Android.hasFocusFix === 'function' && Android.hasFocusFix());
-
 /* ============ KULLANICI AYARLARI ============ */
 const DEFAULT_SETTINGS = {
+  showScreen: false,       // Telefonda canli oyun/uygulama ekrani goster
+  fullScreenArea: true,    // Imlec ve Ayna alani ekranin tamamini kaplasin
+  hybridTap: true,         // KUMANDA modunda bos alana dokununca oyuna tikla
+  screenDim: 0.20,         // KUMANDA modunda canli ekran karartma orani
   vBar: true,
   hBar: true,
   twoFinger: true,
   scrollDir: 'wheel',
   scrollSpeed: 1.6,
   curSpeed: 1.3,
-  barSize: 56,
+  barSize: 52,
   leftStyle: 'joystick',   // 'joystick' | 'dpad' | 'wheel'
   steerTarget: 'analog',   // 'analog' | 'buttons'
-  focusLock: 'auto',       // 'auto' | 'on' | 'off'
   tiltSens: 1.5
 };
 
 let CFG = Object.assign({}, DEFAULT_SETTINGS);
 try {
-  const s = JSON.parse(localStorage.getItem('m2t_cfg_v4') || localStorage.getItem('m2t_cfg_v3') || '{}');
+  const s = JSON.parse(localStorage.getItem('m2t_cfg_v5') || localStorage.getItem('m2t_cfg_v4') || '{}');
   CFG = Object.assign({}, DEFAULT_SETTINGS, s);
 } catch(e) {}
 
 function saveCfg(){
-  try { localStorage.setItem('m2t_cfg_v4', JSON.stringify(CFG)); } catch(e) {}
-}
-
-function isFocusLockEnabled(){
-  if (CFG.focusLock === 'on') return true;
-  if (CFG.focusLock === 'off') return false;
-  // 'auto': Eger eski APK kullaniliyorsa (FLAG_NOT_FOCUSABLE yoksa) otomatik Odak Kilidi ac!
-  return !HAS_NATIVE_FOCUS_FIX;
+  try { localStorage.setItem('m2t_cfg_v5', JSON.stringify(CFG)); } catch(e) {}
 }
 
 /* ============ VARSAYILAN OYUN PROFILI ============ */
@@ -295,7 +308,9 @@ function getDpadCtrls(){ return controls.filter(c => c.tip === 'yon_ok'); }
 
 let TV_ORAN = 16/9;
 const cv = document.getElementById('cv'), cx = cv.getContext('2d');
+const bar = document.getElementById('bar'), minBarBtn = document.getElementById('minBarBtn');
 const info = document.getElementById('info'), modeBtn = document.getElementById('modeBtn');
+const previewBtn = document.getElementById('previewBtn');
 const ctrlStyleBtn = document.getElementById('ctrlStyleBtn');
 const editBtn = document.getElementById('editBtn'), resetBtn = document.getElementById('resetBtn');
 let W=0, H=0, area={x:0,y:0,w:0,h:0};
@@ -323,7 +338,6 @@ let twoFingerPrev = null;
 let editMode = false;
 let selectedCtrl = null;
 
-// Direksiyon durumu
 let wheelState = {
   active: false,
   touchControlled: false,
@@ -349,39 +363,6 @@ function send(a,id,nx,ny){
   try { if (window.Android) Android.touch(a,id,nx,ny); } catch(e) {}
 }
 
-/* ============ ODAK KILIDI (FOCUS-LOCK ANCHOR) & KESINTISIZ JOYSTICK MOTORU ============
-   Neden TV baglandiktan sonra (Chrome veya Asphalt acikken) joystick/oklar 3-5 denemede bir
-   tutuyor ve ilk dokunusta hemen birakiyordu?
-   Sebep:
-   TV baglandiginda scrcpy-server 2. bir ekran (VirtualDisplay / Display 2) olusturur.
-   Kullanici telefon ekranina (Display 0) dokundugunda Android pencere odagini Display 0'a verir;
-   hemen ardindan Display 2'ye ilk dokunus (ACTION_DOWN, 0 -> 1 parmak) gonderildiginde
-   Android InputDispatcher (onPointerDownOutsideFocusLocked) pencere odagini Display 2'ye geri alir!
-   KumandaActivity (WebView) pencere odagini kaybettiginde (onWindowFocusChanged(false)),
-   Chromium WebView aktif dokunusu aninda ACTION_CANCEL (touchcancel) ile iptal eder!
-
-   Cozum (Cift Katmanli):
-   1. Yeni APK'da (KumandaActivity.kt): FLAG_NOT_FOCUSABLE + onWindowFocusChanged(true) + ACTION_CANCEL
-      kalkani ile WebView odagi asla kaybetmez.
-   2. Sadece HTML guncelleyenler icin (Odak Kilidi):
-      Mod: KUMANDA'ya gecildiginde (parmak ekranda degilken!) JOY_PID=0 (veya ANCHOR_PID=8)
-      onceden TV ekranina basili (armed) hale getirilir. Boylece kullanici parmagini telefon ekranina
-      koydugunda TV'ye yeni bir ACTION_DOWN (0->1) degil, yalnizca ACTION_MOVE (veya 2. parmak
-      ACTION_POINTER_DOWN) gider. Android InputDispatcher ACTION_MOVE ve ACTION_POINTER_DOWN
-      olaylarinda pencere odagini ASLA degistirmez, WebView ASLA touchcancel uretmez! */
-
-const JOY_PID = 0;
-const ANCHOR_PID = 8;
-const SCROLL_PID = 9;
-
-let anchorState = {
-  joyArmed: false,
-  topArmed: false,
-  jx: 0.18,
-  jy: 0.72,
-  armTimer: null
-};
-
 function isAnyModalOpen(){
   return (
     document.getElementById('panel').style.display === 'flex' ||
@@ -390,62 +371,24 @@ function isAnyModalOpen(){
   );
 }
 
-function disarmFocusAnchor(){
-  if (anchorState.armTimer) { clearTimeout(anchorState.armTimer); anchorState.armTimer = null; }
-  if (anchorState.joyArmed) {
-    send(1, JOY_PID, anchorState.jx, anchorState.jy);
-    anchorState.joyArmed = false;
-  }
-  if (anchorState.topArmed) {
-    send(1, ANCHOR_PID, 0.50, 0.001);
-    anchorState.topArmed = false;
-  }
-}
-
-function syncFocusAnchor(){
-  if (anchorState.armTimer) { clearTimeout(anchorState.armTimer); anchorState.armTimer = null; }
-  if (mode !== 'kumanda' || editMode || isAnyModalOpen() || !isFocusLockEnabled()) {
-    disarmFocusAnchor();
-    return;
-  }
-  // Parmak ekranda degilken 50ms sonra odagi TV ekranina kilitleyen baslangic dokunusunu kur
-  anchorState.armTimer = setTimeout(() => {
-    anchorState.armTimer = null;
-    if (mode !== 'kumanda' || editMode || isAnyModalOpen() || !isFocusLockEnabled()) return;
-    if (CFG.steerTarget === 'analog') {
-      if (anchorState.topArmed) {
-        send(1, ANCHOR_PID, 0.50, 0.001);
-        anchorState.topArmed = false;
-      }
-      const joy = getJoyCtrl();
-      anchorState.jx = joy.oyun.x;
-      anchorState.jy = joy.oyun.y;
-      if (!anchorState.joyArmed) {
-        send(0, JOY_PID, anchorState.jx, anchorState.jy);
-        anchorState.joyArmed = true;
-      }
-    } else {
-      if (anchorState.joyArmed) {
-        send(1, JOY_PID, anchorState.jx, anchorState.jy);
-        anchorState.joyArmed = false;
-      }
-      if (!anchorState.topArmed) {
-        send(0, ANCHOR_PID, 0.50, 0.001);
-        anchorState.topArmed = true;
-      }
+function syncNativePreviewRect(){
+  if (!W || !H) return;
+  const wantPreview = !!CFG.showScreen && !isAnyModalOpen();
+  const nx = Math.max(0, Math.min(1, area.x / W));
+  const ny = Math.max(0, Math.min(1, area.y / H));
+  const nw = Math.max(0.05, Math.min(1, area.w / W));
+  const nh = Math.max(0.05, Math.min(1, area.h / H));
+  try {
+    if (window.Android && typeof Android.setPreviewRect === 'function') {
+      Android.setPreviewRect(nx, ny, nw, nh, wantPreview);
     }
-  }, 50);
+  } catch(e) {}
 }
 
-function isJoyPointerActivelyMoved(){
-  for (const a of active.values()) {
-    if (a.p === JOY_PID && (a.kind === 'cubuk' || a.kind === 'yon_ok' || a.kind === 'wheel_touch')) {
-      return true;
-    }
-  }
-  return false;
-}
-
+/* ============ CANLI TUTMA & 5-ADIMLI YUMUSAK JOYSTICK YAKALAMA ============
+   Parmak basili tutuldugu surece 35ms'de bir mikro-titresim gonderir;
+   parmak cekildigi anda (onEnd) derhal ACTION_UP (send(1,...)) gondererek
+   TV'deki imlecin ve oyundaki tusun basili kalmasini 100% onler! */
 let jitterToggle = 1;
 setInterval(() => {
   if (mode !== 'kumanda' || editMode) return;
@@ -459,37 +402,13 @@ setInterval(() => {
       send(2, a.p, a.nx + eps, a.ny);
     }
   }
-
-  // Odak kilidi aktifken ve parmak joystick uzerinde degilken merkez/anchor noktasini canli tut
-  if (anchorState.joyArmed && !isJoyPointerActivelyMoved()) {
-    const joy = getJoyCtrl();
-    anchorState.jx = joy.oyun.x;
-    anchorState.jy = joy.oyun.y;
-    send(2, JOY_PID, anchorState.jx + eps, anchorState.jy);
-  }
-  if (anchorState.topArmed) {
-    send(2, ANCHOR_PID, 0.50 + eps, 0.001);
-  }
 }, 35);
 
-/** Merkez (startX, startY) noktasindan (targetX, targetY) noktasina 5 ara adimla puruzsuz kaydirir */
 function startSmoothAnalogHold(state, startX, startY, targetX, targetY){
   if (state.rampTimer) { clearInterval(state.rampTimer); state.rampTimer = null; }
   state.nx = targetX;
   state.ny = targetY;
-
-  // Eger JOY_PID zaten Odak Kilidi ile basiliysa YENI ACTION_DOWN GONDERME (odak degismesin!),
-  // dogrudan ACTION_MOVE (2) ile merkezden hedefe kaydir!
-  if (state.p === JOY_PID && anchorState.joyArmed) {
-    send(2, JOY_PID, startX, startY);
-  } else {
-    send(0, state.p, startX, startY);
-    if (state.p === JOY_PID && isFocusLockEnabled() && CFG.steerTarget === 'analog') {
-      anchorState.joyArmed = true;
-      anchorState.jx = startX;
-      anchorState.jy = startY;
-    }
-  }
+  send(0, state.p, startX, startY);
 
   const dist = Math.hypot(targetX - startX, targetY - startY);
   if (dist < 0.008) {
@@ -516,21 +435,6 @@ function startSmoothAnalogHold(state, startX, startY, targetX, targetY){
       state.ramping = false;
     }
   }, 9);
-}
-
-function releaseAnalogPointer(state){
-  if (state.p === JOY_PID && isFocusLockEnabled() && CFG.steerTarget === 'analog' && mode === 'kumanda' && !editMode) {
-    // Odak kilidi acikken parmagi cekince ACTION_UP gonderip odagi bozmak yerine
-    // sanal joystick'i merkeze (0,0 notr konuma) geri cek!
-    const joy = getJoyCtrl();
-    anchorState.joyArmed = true;
-    anchorState.jx = joy.oyun.x;
-    anchorState.jy = joy.oyun.y;
-    send(2, JOY_PID, joy.oyun.x, joy.oyun.y);
-  } else {
-    send(1, state.p, state.nx, state.ny);
-    if (state.p === JOY_PID) anchorState.joyArmed = false;
-  }
 }
 
 /* ============ DIREKSIYON (DOKUNMATIK SIMIT + SENSOR) MOTORU ============ */
@@ -589,6 +493,8 @@ function updateWheelTouchTarget(){
 
 function updateTopBar(){
   modeBtn.textContent = 'Mod: ' + mode.toUpperCase();
+  previewBtn.classList.toggle('on-btn', !!CFG.showScreen);
+  previewBtn.textContent = CFG.showScreen ? '📺 Ekran: ACIK' : '📺 Ekran';
   if (mode === 'kumanda') {
     ctrlStyleBtn.style.display = 'inline-block';
     ctrlStyleBtn.textContent = LEFT_LABELS[CFG.leftStyle] || LEFT_LABELS.joystick;
@@ -603,37 +509,50 @@ function updateTopBar(){
     editBtn.style.display = 'none';
     resetBtn.style.display = 'none';
   }
-  syncFocusAnchor();
 }
 
 function computeLayout(){
   const bs = CFG.barSize;
-  const rightPad = (mode !== 'kumanda' && CFG.vBar) ? (bs + 10) : 0;
-  const bottomPad = (mode !== 'kumanda' && CFG.hBar) ? (bs + 10) : 0;
-  const topPad = 46;
-  const availW = Math.max(100, W - rightPad - 16);
-  const availH = Math.max(100, H - topPad - bottomPad - 8);
+  const showV = (mode !== 'kumanda' && CFG.vBar);
+  const showH = (mode !== 'kumanda' && CFG.hBar);
+  const rightPad = showV ? bs : 0;
+  const bottomPad = showH ? bs : 0;
 
-  let aw = availW, ah = aw / TV_ORAN;
-  if (ah > availH) { ah = availH; aw = ah * TV_ORAN; }
-  area = {
-    x: 8 + (availW - aw) / 2,
-    y: topPad + (availH - ah) / 2,
-    w: aw,
-    h: ah
-  };
+  if (CFG.fullScreenArea || mode === 'kumanda') {
+    // Ekranin tamamini kapla (sadece varsa sag/alt kaydirma cubugu kadar yer birak)
+    area = {
+      x: 0,
+      y: 0,
+      w: Math.max(100, W - rightPad),
+      h: Math.max(100, H - bottomPad)
+    };
+  } else {
+    const topPad = 42;
+    const availW = Math.max(100, W - rightPad - 8);
+    const availH = Math.max(100, H - topPad - bottomPad - 4);
+    let aw = availW, ah = aw / TV_ORAN;
+    if (ah > availH) { ah = availH; aw = ah * TV_ORAN; }
+    area = {
+      x: (availW - aw) / 2,
+      y: topPad + (availH - ah) / 2,
+      w: aw,
+      h: ah
+    };
+  }
 
-  if (mode !== 'kumanda' && CFG.vBar) {
-    vBarRect = { x: W - bs - 4, y: topPad, w: bs, h: H - topPad - bottomPad - 6, btnH: 44 };
+  if (showV) {
+    vBarRect = { x: W - bs, y: 0, w: bs, h: H - bottomPad, btnH: 44 };
   } else {
     vBarRect = null;
   }
 
-  if (mode !== 'kumanda' && CFG.hBar) {
-    hBarRect = { x: 8, y: H - bs - 4, w: W - rightPad - 16, h: bs, btnW: 48 };
+  if (showH) {
+    hBarRect = { x: 0, y: H - bs, w: W - rightPad, h: bs, btnW: 48 };
   } else {
     hBarRect = null;
   }
+
+  syncNativePreviewRect();
 }
 
 function resize(){
@@ -648,6 +567,7 @@ function resize(){
 addEventListener('resize', resize);
 
 /* ============ KESINTISIZ CIFT YONLU + SINIRDA/DISARIDA OTOMATIK KAYDIRMA MOTORU ============ */
+const SCROLL_PID = 9;
 let scroller = {
   down: false,
   resetting: false,
@@ -752,7 +672,6 @@ function finishScrollGesture(){
   scroller.resetting = false;
   scroller.thumbV = 0.5;
   scroller.thumbH = 0.5;
-  setTimeout(() => send(3, 0, curX, curY), 25);
 }
 
 function triggerSmoothSwipe(dirX, dirY){
@@ -778,7 +697,6 @@ function triggerSmoothSwipe(dirX, dirY){
       send(1, SCROLL_PID, endX, endY);
       clearInterval(scroller.animTimer);
       scroller.animTimer = null;
-      setTimeout(() => send(3, 0, curX, curY), 30);
     }
   }, 14);
 }
@@ -787,8 +705,8 @@ const idmap = new Map();
 function pid(t){
   if (!idmap.has(t.identifier)) {
     const used = new Set(idmap.values());
-    let n = 1; // 0 = JOY_PID, 8 = ANCHOR_PID, 9 = SCROLL_PID
-    while (used.has(n) || n === ANCHOR_PID || n === SCROLL_PID) n++;
+    let n = 0;
+    while (used.has(n) || n === SCROLL_PID) n++;
     idmap.set(t.identifier, n);
   }
   return idmap.get(t.identifier);
@@ -818,14 +736,15 @@ function hitGamepadControl(x, y){
   for (const c of list) {
     const dx = x - c.x*W, dy = y - c.y*H;
     const d = Math.hypot(dx, dy);
-    const grabMult = (c.tip === 'cubuk' && !editMode) ? 1.55 : 1.25;
+    const grabMult = (c.tip === 'cubuk' && !editMode) ? 1.45 : 1.22;
     if (d <= c.r * H * grabMult && d < bestDist) {
       best = c;
       bestDist = d;
     }
   }
   if (best) return best;
-  if (!editMode && (CFG.leftStyle === 'joystick' || CFG.leftStyle === 'wheel') && x < W * 0.45 && y > 55) {
+  // Eger Canli Ekran kapaliysa (veya hibrit tiklama kapaliysa) sol yariya dokununca joystick'i yakala
+  if (!editMode && !CFG.showScreen && (CFG.leftStyle === 'joystick' || CFG.leftStyle === 'wheel') && x < W * 0.42 && y > 55) {
     return getJoyCtrl();
   }
   return null;
@@ -847,8 +766,8 @@ function getAreaTouches(touchList){
 }
 
 function computeAreaEdgeVelocity(mx, my){
-  const edgeZoneX = Math.max(26, area.w * 0.13);
-  const edgeZoneY = Math.max(24, area.h * 0.15);
+  const edgeZoneX = Math.max(26, area.w * 0.12);
+  const edgeZoneY = Math.max(24, area.h * 0.14);
   let vx = 0, vy = 0;
 
   if (my <= area.y + edgeZoneY) {
@@ -1019,7 +938,18 @@ function onStart(e){
           send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
         }
       } else {
-        const c = hitGamepadControl(x,y); if (!c) continue;
+        const c = hitGamepadControl(x,y);
+        const p = pid(t);
+        if (!c) {
+          // Canli Ekran aciksa ve tus olmayan bir yere dokunulduysa dogrudan oyundaki o noktaya tikla!
+          if (CFG.showScreen && CFG.hybridTap && inRect(x, y, area)) {
+            const nx = (x - area.x) / area.w, ny = (y - area.y) / area.h;
+            active.set(t.identifier, {id: t.identifier, kind:'pad', p, nx, ny});
+            send(0, p, nx, ny);
+            info.textContent = 'DOKUN: ' + nx.toFixed(2) + ',' + ny.toFixed(2);
+          }
+          continue;
+        }
         if (c.tip === 'cubuk' && CFG.leftStyle === 'wheel') {
           const R = c.r * H;
           const initSteer = Math.min(1, Math.max(-1, ((x - c.x * W) / R) * CFG.tiltSens));
@@ -1028,8 +958,6 @@ function onStart(e){
           wheelState.touchControlled = (Math.abs(initSteer) > 0.08 || !wheelState.hasSensor);
           wheelState.angle = wheelState.touchControlled ? initSteer : 0;
 
-          const useJoyPid = (CFG.steerTarget === 'analog');
-          const p = useJoyPid ? JOY_PID : pid(t);
           const st = {
             id: t.identifier, kind: 'wheel_touch', c, p,
             sx: x, sy: y,
@@ -1055,7 +983,7 @@ function onStart(e){
           const targetY = c.oyun.y + (dy * c.menzil);
 
           const st = {
-            id: t.identifier, kind: 'cubuk', c, p: JOY_PID,
+            id: t.identifier, kind: 'cubuk', c, p,
             nx: targetX, ny: targetY, kx: dx, ky: dy,
             ramping: false, rampTimer: null
           };
@@ -1064,7 +992,6 @@ function onStart(e){
           info.textContent = 'JOYSTICK';
         } else if (c.tip === 'yon_ok') {
           const pos = getDpadTargetPos(c);
-          const p = pos.fromCenter ? JOY_PID : pid(t);
           const st = {
             id: t.identifier, kind: 'yon_ok', c, p,
             nx: pos.x, ny: pos.y,
@@ -1078,7 +1005,6 @@ function onStart(e){
           }
           info.textContent = 'OK: ' + c.ad;
         } else {
-          const p = pid(t);
           active.set(t.identifier, {id: t.identifier, kind:'dugme', c, p, nx:c.oyun.x, ny:c.oyun.y, ramping:false});
           send(0,p,c.oyun.x,c.oyun.y);
           info.textContent = c.ad + ' (' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2) + ')';
@@ -1315,6 +1241,7 @@ function onEnd(e){
     return;
   }
 
+  // Parmak cekildigi anda (onEnd) DERHAL ACTION_UP (1) gonder! Asla basili birakma!
   for (const t of e.changedTouches) {
     const a = active.get(t.identifier); if (!a) continue;
     if (a.rampTimer) { clearInterval(a.rampTimer); a.rampTimer = null; }
@@ -1322,27 +1249,14 @@ function onEnd(e){
       wheelState.active = false;
       wheelState.touchControlled = false;
       wheelState.angle = 0;
-      if (CFG.steerTarget === 'analog') {
-        releaseAnalogPointer(a);
-      } else if (a.heldSide) {
+      if (CFG.steerTarget === 'analog' || a.heldSide) {
         send(1, a.p, a.nx, a.ny);
       }
-    } else if (a.kind === 'cubuk') {
-      releaseAnalogPointer(a);
-    } else if (a.kind === 'yon_ok') {
-      if (CFG.steerTarget === 'analog') {
-        releaseAnalogPointer(a);
-      } else {
-        send(1, a.p, a.nx, a.ny);
-      }
-    } else if (a.kind === 'pad' || a.kind === 'dugme') {
-      send(1,a.p,a.nx,a.ny);
+    } else if (a.kind === 'pad' || a.kind === 'cubuk' || a.kind === 'dugme' || a.kind === 'yon_ok') {
+      send(1, a.p, a.nx, a.ny);
     }
     active.delete(t.identifier);
     idmap.delete(t.identifier);
-  }
-  if (mode === 'kumanda' && active.size === 0) {
-    syncFocusAnchor();
   }
   draw();
 }
@@ -1352,12 +1266,25 @@ cv.addEventListener('touchmove', onMove, {passive:false});
 cv.addEventListener('touchend', onEnd, {passive:false});
 cv.addEventListener('touchcancel', onEnd, {passive:false});
 
+minBarBtn.addEventListener('click', ()=>{
+  bar.classList.toggle('collapsed');
+  minBarBtn.textContent = bar.classList.contains('collapsed') ? '▼ Menü' : '▲';
+});
+
 modeBtn.addEventListener('click', ()=>{
   finishScrollGesture();
   const idx = (MODES.indexOf(mode) + 1) % MODES.length;
   mode = MODES[idx];
   try { localStorage.setItem('m2t_mode', mode); } catch(e) {}
   info.textContent = '-';
+  computeLayout();
+  updateTopBar();
+  draw();
+});
+
+previewBtn.addEventListener('click', ()=>{
+  CFG.showScreen = !CFG.showScreen;
+  saveCfg();
   computeLayout();
   updateTopBar();
   draw();
@@ -1375,13 +1302,11 @@ editBtn.addEventListener('click', ()=>{
   editMode = !editMode;
   const vis = getVisibleGamepadControls();
   if (editMode) {
-    disarmFocusAnchor();
     selectedCtrl = vis[0];
     send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
     info.textContent = selectedCtrl.ad + ' -> ' + selectedCtrl.oyun.x.toFixed(2) + ',' + selectedCtrl.oyun.y.toFixed(2);
   } else {
     info.textContent = 'Kaydedildi';
-    syncFocusAnchor();
   }
   updateTopBar();
   draw();
@@ -1404,14 +1329,14 @@ const guideModal = document.getElementById('guideModal');
 const chkHideGuide = document.getElementById('chkHideGuide');
 
 function openGuide(){
-  disarmFocusAnchor();
   try { chkHideGuide.checked = (localStorage.getItem('m2t_hide_guide') === '1'); } catch(e) {}
   guideModal.style.display = 'flex';
+  syncNativePreviewRect();
 }
 function closeGuide(){
   try { localStorage.setItem('m2t_hide_guide', chkHideGuide.checked ? '1' : '0'); } catch(e) {}
   guideModal.style.display = 'none';
-  syncFocusAnchor();
+  syncNativePreviewRect();
 }
 
 document.getElementById('helpBtn').addEventListener('click', openGuide);
@@ -1426,13 +1351,17 @@ try {
 
 /* ---------- Ayarlar Modal Mantigi ---------- */
 const settingsModal = document.getElementById('settingsModal');
+const chkShowScreen = document.getElementById('chkShowScreen');
+const chkFullArea = document.getElementById('chkFullArea');
+const chkHybridTap = document.getElementById('chkHybridTap');
+const rngScreenDim = document.getElementById('rngScreenDim');
+const lblScreenDim = document.getElementById('lblScreenDim');
 const chkVBar = document.getElementById('chkVBar');
 const chkHBar = document.getElementById('chkHBar');
 const chkTwoFinger = document.getElementById('chkTwoFinger');
 const selScrollDir = document.getElementById('selScrollDir');
 const selLeftStyle = document.getElementById('selLeftStyle');
 const selSteerTarget = document.getElementById('selSteerTarget');
-const selFocusLock = document.getElementById('selFocusLock');
 const rngTiltSens = document.getElementById('rngTiltSens');
 const lblTiltSens = document.getElementById('lblTiltSens');
 const rngScrollSpeed = document.getElementById('rngScrollSpeed');
@@ -1442,13 +1371,17 @@ const lblCurSpeed = document.getElementById('lblCurSpeed');
 const rngBarSize = document.getElementById('rngBarSize');
 
 function syncSettingsUI(){
+  chkShowScreen.checked = !!CFG.showScreen;
+  chkFullArea.checked = !!CFG.fullScreenArea;
+  chkHybridTap.checked = !!CFG.hybridTap;
+  rngScreenDim.value = CFG.screenDim ?? 0.20;
+  lblScreenDim.textContent = '%' + Math.round((CFG.screenDim ?? 0.20) * 100);
   chkVBar.checked = !!CFG.vBar;
   chkHBar.checked = !!CFG.hBar;
   chkTwoFinger.checked = !!CFG.twoFinger;
   selScrollDir.value = CFG.scrollDir || 'wheel';
   selLeftStyle.value = CFG.leftStyle || 'joystick';
   selSteerTarget.value = CFG.steerTarget || 'analog';
-  selFocusLock.value = CFG.focusLock || 'auto';
   rngTiltSens.value = CFG.tiltSens || 1.5;
   lblTiltSens.textContent = Number(CFG.tiltSens || 1.5).toFixed(1) + 'x';
   rngScrollSpeed.value = CFG.scrollSpeed;
@@ -1460,19 +1393,22 @@ function syncSettingsUI(){
 }
 
 document.getElementById('setBtn').addEventListener('click', ()=>{
-  disarmFocusAnchor();
   syncSettingsUI();
   settingsModal.style.display = 'flex';
+  syncNativePreviewRect();
 });
 
 document.getElementById('closeSetBtn').addEventListener('click', ()=>{
+  CFG.showScreen = chkShowScreen.checked;
+  CFG.fullScreenArea = chkFullArea.checked;
+  CFG.hybridTap = chkHybridTap.checked;
+  CFG.screenDim = parseFloat(rngScreenDim.value);
   CFG.vBar = chkVBar.checked;
   CFG.hBar = chkHBar.checked;
   CFG.twoFinger = chkTwoFinger.checked;
   CFG.scrollDir = selScrollDir.value;
   CFG.leftStyle = selLeftStyle.value;
   CFG.steerTarget = selSteerTarget.value;
-  CFG.focusLock = selFocusLock.value;
   CFG.tiltSens = parseFloat(rngTiltSens.value);
   CFG.scrollSpeed = parseFloat(rngScrollSpeed.value);
   CFG.curSpeed = parseFloat(rngCurSpeed.value);
@@ -1484,6 +1420,7 @@ document.getElementById('closeSetBtn').addEventListener('click', ()=>{
   draw();
 });
 
+rngScreenDim.addEventListener('input', ()=> lblScreenDim.textContent = '%' + Math.round(Number(rngScreenDim.value) * 100));
 rngTiltSens.addEventListener('input', ()=> lblTiltSens.textContent = Number(rngTiltSens.value).toFixed(1) + 'x');
 rngScrollSpeed.addEventListener('input', ()=> lblScrollSpeed.textContent = Number(rngScrollSpeed.value).toFixed(1) + 'x');
 rngCurSpeed.addEventListener('input', ()=> lblCurSpeed.textContent = Number(rngCurSpeed.value).toFixed(1) + 'x');
@@ -1496,11 +1433,11 @@ function drawScrollbars(){
 
   if (vBarRect) {
     const r = vBarRect;
-    cx.fillStyle = '#141b2d';
+    cx.fillStyle = 'rgba(20,27,45,0.92)';
     cx.strokeStyle = scroller.down ? '#ff9f43' : '#2a3350';
     cx.lineWidth = 1.5;
     cx.beginPath();
-    cx.roundRect(r.x, r.y, r.w, r.h, 10);
+    cx.roundRect(r.x, r.y, r.w, r.h, 8);
     cx.fill();
     cx.stroke();
 
@@ -1520,7 +1457,7 @@ function drawScrollbars(){
     const ty = trackY + scroller.thumbV * trackH;
     cx.fillStyle = scroller.down ? '#ff9f43' : '#2b3b66';
     cx.beginPath();
-    cx.roundRect(r.x + 6, ty - 18, r.w - 12, 36, 7);
+    cx.roundRect(r.x + 5, ty - 18, r.w - 10, 36, 7);
     cx.fill();
     cx.fillStyle = '#cfd8ff';
     cx.font = '12px system-ui';
@@ -1529,11 +1466,11 @@ function drawScrollbars(){
 
   if (hBarRect) {
     const r = hBarRect;
-    cx.fillStyle = '#141b2d';
+    cx.fillStyle = 'rgba(20,27,45,0.92)';
     cx.strokeStyle = scroller.down ? '#ff9f43' : '#2a3350';
     cx.lineWidth = 1.5;
     cx.beginPath();
-    cx.roundRect(r.x, r.y, r.w, r.h, 10);
+    cx.roundRect(r.x, r.y, r.w, r.h, 8);
     cx.fill();
     cx.stroke();
 
@@ -1553,7 +1490,7 @@ function drawScrollbars(){
     const tx = trackX + scroller.thumbH * trackW;
     cx.fillStyle = scroller.down ? '#ff9f43' : '#2b3b66';
     cx.beginPath();
-    cx.roundRect(tx - 22, r.y + 6, 44, r.h - 12, 7);
+    cx.roundRect(tx - 22, r.y + 5, 44, r.h - 10, 7);
     cx.fill();
     cx.fillStyle = '#cfd8ff';
     cx.font = '12px system-ui';
@@ -1568,7 +1505,7 @@ function drawSteeringWheel(c, isSel){
   cx.rotate(wheelState.angle * (Math.PI / 2.6));
 
   cx.lineWidth = 11;
-  cx.strokeStyle = isSel ? '#ff9f43' : (wheelState.active ? '#2ecc71' : '#3a4c7a');
+  cx.strokeStyle = isSel ? '#ff9f43' : (wheelState.active ? '#2ecc71' : 'rgba(58,76,122,0.85)');
   cx.beginPath();
   cx.arc(0, 0, R, 0, Math.PI * 2);
   cx.stroke();
@@ -1584,59 +1521,90 @@ function drawSteeringWheel(c, isSel){
   cx.arc(0, -R, 7, 0, Math.PI * 2);
   cx.fill();
 
-  cx.fillStyle = wheelState.active ? '#1d3b2a' : '#18203a';
+  cx.fillStyle = wheelState.active ? 'rgba(29,59,42,0.85)' : 'rgba(24,32,58,0.75)';
   cx.beginPath();
   cx.arc(0, 0, R * 0.36, 0, Math.PI * 2);
   cx.fill();
   cx.restore();
 
   cx.fillStyle = wheelState.active ? '#2ecc71' : '#9ab0e6';
-  cx.font = 'bold 12.5px system-ui';
+  cx.font = 'bold 12px system-ui';
   cx.fillText(wheelState.active ? 'DIREKSIYON AKTIF' : 'TUT & SAGA/SOLA CEVIR', px, py);
   if (editMode) {
-    cx.fillStyle = '#8fa4d4'; cx.font = '11px monospace';
+    cx.fillStyle = '#ff9f43'; cx.font = '11px monospace';
     cx.fillText(c.oyun.x.toFixed(2)+','+c.oyun.y.toFixed(2), px, py + R + 16);
   }
 }
 
+function drawBackgroundWithCutout(){
+  if (!CFG.showScreen) {
+    cx.fillStyle = '#0b0e14';
+    cx.fillRect(0, 0, W, H);
+    return;
+  }
+  // Canli Ekran acikken: Once tum canvas'i seffaf yap, sadece area disindaki kenarlari boya
+  cx.clearRect(0, 0, W, H);
+  cx.fillStyle = '#0b0e14';
+  if (area.y > 0) cx.fillRect(0, 0, W, area.y);
+  if (area.y + area.h < H) cx.fillRect(0, area.y + area.h, W, H - (area.y + area.h));
+  if (area.x > 0) cx.fillRect(0, area.y, area.x, area.h);
+  if (area.x + area.w < W) cx.fillRect(area.x + area.w, area.y, W - (area.x + area.w), area.h);
+}
+
 function draw(){
-  cx.fillStyle = '#0b0e14'; cx.fillRect(0,0,W,H);
+  drawBackgroundWithCutout();
   cx.textAlign = 'center'; cx.textBaseline = 'middle';
 
   if (mode === 'imlec') {
-    cx.fillStyle = '#0e131d';
-    cx.fillRect(area.x, area.y, area.w, area.h);
+    if (!CFG.showScreen) {
+      cx.fillStyle = '#0e131d';
+      cx.fillRect(area.x, area.y, area.w, area.h);
+    }
     const isEdge = (scroller.edgeVX !== 0 || scroller.edgeVY !== 0);
-    cx.strokeStyle = isEdge ? '#2ecc71' : (scroller.down ? '#ff9f43' : '#3a4870');
+    cx.strokeStyle = isEdge ? '#2ecc71' : (scroller.down ? '#ff9f43' : 'rgba(77,163,255,0.45)');
     cx.lineWidth = isEdge ? 3 : 2;
     cx.setLineDash([8,6]);
-    cx.strokeRect(area.x, area.y, area.w, area.h); cx.setLineDash([]);
-    cx.fillStyle = '#4da3ff'; cx.font = '15px system-ui';
-    cx.fillText('DOKUNMA ALANI: 1 Parmak Imlec/Tik | 2 Parmak Kesintisiz Her Yone Kaydirma', area.x + area.w/2, area.y + area.h/2 - 14);
-    cx.fillStyle = '#5c6b9c'; cx.font = '13px system-ui';
-    cx.fillText('2 parmakla cizgi disina cikilsa veya sinirda tutulsa bile otomatik kaymaya devam eder', area.x + area.w/2, area.y + area.h/2 + 14);
+    cx.strokeRect(area.x + 1, area.y + 1, area.w - 2, area.h - 2);
+    cx.setLineDash([]);
+    if (!CFG.showScreen) {
+      cx.fillStyle = '#4da3ff'; cx.font = '15px system-ui';
+      cx.fillText('DOKUNMA ALANI (TAM EKRAN): 1 Parmak Imlec/Tik | 2 Parmak Kaydirma', area.x + area.w/2, area.y + area.h/2 - 14);
+      cx.fillStyle = '#5c6b9c'; cx.font = '13px system-ui';
+      cx.fillText('(Ustteki "📺 Ekran" butonuyla oyun/program goruntusunu telefonda acabilirsiniz)', area.x + area.w/2, area.y + area.h/2 + 14);
+    }
     const px = area.x + curX * area.w, py = area.y + curY * area.h;
-    cx.strokeStyle = scroller.down ? '#ff9f43' : '#4da3ff'; cx.lineWidth = 2;
+    cx.strokeStyle = scroller.down ? '#ff9f43' : '#4da3ff'; cx.lineWidth = 2.5;
     cx.beginPath(); cx.arc(px, py, 12, 0, Math.PI*2); cx.stroke();
+    cx.fillStyle = '#ffffff';
+    cx.beginPath(); cx.arc(px, py, 3, 0, Math.PI*2); cx.fill();
     drawScrollbars();
     return;
   }
 
   if (mode === 'ayna') {
-    cx.fillStyle = '#0e131d';
-    cx.fillRect(area.x, area.y, area.w, area.h);
-    cx.strokeStyle = '#3a4870'; cx.lineWidth = 2; cx.setLineDash([8,6]);
-    cx.strokeRect(area.x, area.y, area.w, area.h); cx.setLineDash([]);
-    cx.fillStyle = '#34406a'; cx.font = '15px system-ui';
-    cx.fillText('AYNA ALANI: Sadece bu cizgili kutu icindeki dokunus oyuna gider', area.x + area.w/2, area.y + area.h/2 - 10);
-    cx.fillText('(Sag ve alt cubuklarla dokunmadan sayfayi kaydirabilirsiniz)', area.x + area.w/2, area.y + area.h/2 + 18);
+    if (!CFG.showScreen) {
+      cx.fillStyle = '#0e131d';
+      cx.fillRect(area.x, area.y, area.w, area.h);
+      cx.fillStyle = '#4da3ff'; cx.font = '15px system-ui';
+      cx.fillText('AYNA MODU (TAM EKRAN): Dokundugunuz yer dogrudan TV\'de tiklanir', area.x + area.w/2, area.y + area.h/2 - 12);
+      cx.fillStyle = '#7f94c7'; cx.font = '13.5px system-ui';
+      cx.fillText('Ust bardaki "📺 Ekran" butonuna basarak oyunu/programi burada canli gorebilirsiniz!', area.x + area.w/2, area.y + area.h/2 + 16);
+    }
+    cx.strokeStyle = 'rgba(77,163,255,0.40)'; cx.lineWidth = 1.5; cx.setLineDash([8,6]);
+    cx.strokeRect(area.x + 1, area.y + 1, area.w - 2, area.h - 2); cx.setLineDash([]);
     drawScrollbars();
     return;
   }
 
+  // Mod: KUMANDA
+  if (CFG.showScreen && (CFG.screenDim ?? 0.20) > 0) {
+    cx.fillStyle = 'rgba(11,14,20,' + (CFG.screenDim ?? 0.20) + ')';
+    cx.fillRect(area.x, area.y, area.w, area.h);
+  }
+
   if (editMode) {
-    cx.fillStyle = '#ff9f43'; cx.font = '13.5px system-ui';
-    cx.fillText('AYAR MODU: Bir tusa dokunun, ardindan parmaginizi kaydirarak TV\'deki mavi imleci oyundaki tusun uzerine getirin', W/2, 52);
+    cx.fillStyle = '#ff9f43'; cx.font = 'bold 13.5px system-ui';
+    cx.fillText('AYAR MODU: Bir tusa dokunun, ardindan parmaginizi kaydirarak hedefi oyundaki tusun uzerine getirin', W/2, 50);
   }
 
   const vis = getVisibleGamepadControls();
@@ -1646,6 +1614,18 @@ function draw(){
     for (const a of active.values()) if (a.c === c) st = a;
     const isSel = editMode && selectedCtrl === c;
 
+    // Tus Hedefi duzenleme modunda ve Canli Ekran acikken tusun oyundaki hedef noktasini da ciz!
+    if (editMode) {
+      const tx = area.x + c.oyun.x * area.w;
+      const ty = area.y + c.oyun.y * area.h;
+      cx.strokeStyle = isSel ? '#2ecc71' : 'rgba(255,159,67,0.7)';
+      cx.lineWidth = isSel ? 3 : 1.5;
+      cx.beginPath(); cx.arc(tx, ty, 16, 0, Math.PI*2); cx.stroke();
+      cx.fillStyle = isSel ? '#2ecc71' : '#ff9f43';
+      cx.font = 'bold 11px system-ui';
+      cx.fillText('🎯 ' + c.ad, tx, ty - 22);
+    }
+
     if (c.tip === 'cubuk' && CFG.leftStyle === 'wheel' && !editMode) {
       drawSteeringWheel(c, isSel);
       continue;
@@ -1653,19 +1633,19 @@ function draw(){
 
     if (c.tip === 'cubuk') {
       cx.lineWidth = 1;
-      cx.strokeStyle = 'rgba(77,163,255,0.18)';
-      cx.beginPath(); cx.arc(px, py, R * 1.45, 0, Math.PI*2); cx.stroke();
+      cx.strokeStyle = 'rgba(77,163,255,0.22)';
+      cx.beginPath(); cx.arc(px, py, R * 1.4, 0, Math.PI*2); cx.stroke();
 
       cx.lineWidth = isSel ? 4 : 3;
-      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : '#2a3350');
+      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : 'rgba(77,163,255,0.55)');
       cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.stroke();
       const kx = (st && st.kx) ? st.kx : 0, ky = (st && st.ky) ? st.ky : 0;
-      cx.fillStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : '#1d2644');
+      cx.fillStyle = isSel ? '#ff9f43' : (st ? 'rgba(77,163,255,0.85)' : 'rgba(29,38,68,0.65)');
       cx.beginPath(); cx.arc(px+kx*R, py+ky*R, R*0.40, 0, Math.PI*2); cx.fill();
     } else if (c.tip === 'yon_ok') {
       cx.lineWidth = isSel ? 4 : 3;
-      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : '#2a3350');
-      cx.fillStyle = isSel ? 'rgba(255,159,67,.28)' : (st ? 'rgba(77,163,255,.38)' : '#141c30');
+      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : 'rgba(77,163,255,0.55)');
+      cx.fillStyle = isSel ? 'rgba(255,159,67,.32)' : (st ? 'rgba(77,163,255,.45)' : 'rgba(20,28,48,0.65)');
       cx.beginPath();
       cx.roundRect(px - R, py - R, R*2, R*2, 14);
       cx.fill();
@@ -1675,17 +1655,14 @@ function draw(){
       cx.fillText(arrowSym, px, py);
     } else {
       cx.lineWidth = isSel ? 4 : 3;
-      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : '#2a3350');
-      cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.stroke();
-      if (st || isSel) {
-        cx.fillStyle = isSel ? 'rgba(255,159,67,.25)' : 'rgba(77,163,255,.35)';
-        cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.fill();
-      }
+      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : 'rgba(77,163,255,0.55)');
+      cx.fillStyle = isSel ? 'rgba(255,159,67,.28)' : (st ? 'rgba(77,163,255,.42)' : 'rgba(20,28,48,0.58)');
+      cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.fill(); cx.stroke();
       cx.fillStyle = '#cfd8ff'; cx.font = 'bold 20px system-ui';
       cx.fillText(c.ad || '', px, py);
     }
     if (editMode) {
-      cx.fillStyle = '#8fa4d4'; cx.font = '11px monospace';
+      cx.fillStyle = '#ff9f43'; cx.font = '11px monospace';
       cx.fillText(c.ad + ':' + c.oyun.x.toFixed(2)+','+c.oyun.y.toFixed(2), px, py + R + 14);
     }
   }
@@ -1721,7 +1698,7 @@ function renderApps(){
       try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
       try { Android.launch(a.c); } catch(e) {}
       panel.style.display = 'none';
-      syncFocusAnchor();
+      syncNativePreviewRect();
     });
     applist.appendChild(b);
   }
@@ -1733,14 +1710,14 @@ q.addEventListener('blur', () => {
   try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
 });
 document.getElementById('appBtn').addEventListener('click', () => {
-  disarmFocusAnchor();
   try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(true); } catch(e) {}
   q.value = ''; renderApps(); panel.style.display = 'flex';
+  syncNativePreviewRect();
 });
 document.getElementById('closeBtn').addEventListener('click', () => {
   try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
   panel.style.display = 'none';
-  syncFocusAnchor();
+  syncNativePreviewRect();
 });
 q.addEventListener('input', renderApps);
 document.getElementById('backBtn').addEventListener('click', () => { try { Android.back(); } catch(e) {} });
