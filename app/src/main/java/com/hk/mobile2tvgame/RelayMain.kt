@@ -374,18 +374,20 @@ object RelayMain {
             val pkg = comp.substringBefore('/').trim()
             val firstLaunchOnTv = pkg.isNotEmpty() && !launchedOnVirtualDisplay.contains(pkg)
 
+            // Eger bu uygulama daha once telefonun kendi ekraninda (Display 0) acik kaldiysa,
+            // ilk kez sanal ekrana tasirken onceki Display 0 gorevini kapat ki sanal ekranda acilsin:
+            if (firstLaunchOnTv && pkg != "com.hk.mobile2tvgame" && pkg != "moe.shizuku.privileged.api") {
+                try {
+                    runCmd("/system/bin/am", "force-stop", pkg)
+                } catch (_: Exception) {}
+            }
+
             p("Uygulama sanal ekranda (id=$targetDisp) baslatiliyor: $comp")
 
             val cmd = mutableListOf(
-                "/system/bin/am", "start",
-                "--display", targetDisp.toString(),
-                "--windowingMode", "1",
-                "--activity-new-task"
+                "/system/bin/am", "start", "--display", targetDisp.toString(),
+                "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"
             )
-            if (firstLaunchOnTv) {
-                cmd.add("--activity-clear-task")
-            }
-            cmd.addAll(listOf("-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"))
             if (comp.contains('/')) {
                 cmd.add("-n")
                 cmd.add(comp)
@@ -400,15 +402,6 @@ object RelayMain {
             if (pkg.isNotEmpty()) {
                 launchedOnVirtualDisplay.add(pkg)
             }
-
-            // Telefon ekraninda (Display 0) KumandaActivity'nin her zaman en ustte kalmasini sagla
-            try {
-                runCmd(
-                    "/system/bin/am", "start", "--display", "0",
-                    "--activity-single-top", "--activity-reorder-to-front",
-                    "-n", "com.hk.mobile2tvgame/.KumandaActivity"
-                )
-            } catch (_: Exception) {}
         }
     }
 
@@ -588,7 +581,6 @@ object RelayMain {
                 vh = it.groupValues[2].toInt()
             }
 
-            // Eger onceki oturumdan acik kalmis bir RelayMain varsa temizce kapat
             stopPreviousRelayIfRunning()
 
             startLocalControl()
@@ -732,7 +724,6 @@ object RelayMain {
                 initialHdr69 = hdr.clone()
             }
 
-            // Sanal ekran ve yerel onizleme artik hazir; simdi TV sunucusunu ve UDP beacon'i baslat
             startTvVideoServer(port)
             startBeacon(port)
             p("Sanal ekran aktif! TV bekleniyor (port $port)...")
@@ -836,8 +827,8 @@ object RelayMain {
             try { tvSocket?.close() } catch (_: Exception) {}
             try { sock?.close() } catch (_: Exception) {}
             try { audSock?.close() } catch (_: Exception) {}
-            try { serverProc?.destroy() } catch (_: Exception) {}
-            try { File(TMP_JAR_PATH).delete() } catch (_: Exception) {}
+            try { serverProc?.destroy() } catch (_: Throwable) {}
+            try { File(TMP_JAR_PATH).delete() } catch (_: Throwable) {}
         }
         p("BITTI")
         System.exit(0)
