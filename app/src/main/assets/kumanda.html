@@ -378,6 +378,8 @@ const streamBtn = document.getElementById('streamBtn');
 const streamStatusBadge = document.getElementById('streamStatusBadge');
 const streamLogBox = document.getElementById('streamLogBox');
 
+let autoStreamAttempted = false;
+
 function refreshStreamStateUI(){
   if (!window.Android || typeof Android.shizukuState !== 'function') {
     streamStatusBadge.textContent = 'Durum: Mevcut APK (Yayin kontrolu icin yeni APK kurun)';
@@ -385,13 +387,25 @@ function refreshStreamStateUI(){
   }
   try {
     const st = JSON.parse(Android.shizukuState());
-    if (st.streaming) {
-      streamBtn.textContent = '🟢 Yayin Aktif';
+    if (!autoStreamAttempted && st.running && st.granted && !st.streaming && typeof Android.startStream === 'function') {
+      autoStreamAttempted = true;
+      Android.startStream(CFG.displaySpec || '1920x1080/360', CFG.startAppPkg || 'com.android.chrome', CFG.scrcpyVer || '5.0.1');
+      return;
+    }
+    if (st.streaming && st.tvConnected) {
+      streamBtn.textContent = '🟢 TV Bagli';
       streamBtn.classList.add('on-btn');
+      streamBtn.classList.remove('active-btn');
       streamStatusBadge.style.color = '#2ecc71';
+    } else if (st.streaming) {
+      streamBtn.textContent = '⏳ TV Bekleniyor';
+      streamBtn.classList.remove('on-btn');
+      streamBtn.classList.add('active-btn');
+      streamStatusBadge.style.color = '#ff9f43';
     } else {
       streamBtn.textContent = '▶️ Yayin';
       streamBtn.classList.remove('on-btn');
+      streamBtn.classList.remove('active-btn');
       streamStatusBadge.style.color = st.granted ? '#4da3ff' : '#ff9f43';
     }
     const shizukuTxt = st.running ? (st.granted ? 'Shizuku Hazir ✓' : 'Shizuku Izni Gerekli') : 'Shizuku Calismiyor';
@@ -2206,7 +2220,20 @@ function renderApps(){
         setControllerMode(targetMode);
       }
       try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
-      try { Android.launch(a.c); } catch(e) {}
+      try {
+        if (window.Android && typeof Android.shizukuState === 'function') {
+          const st = JSON.parse(Android.shizukuState());
+          if (!st.streaming && st.running && st.granted && typeof Android.startStream === 'function') {
+            Android.startStream(CFG.displaySpec || '1920x1080/360', a.c, CFG.scrcpyVer || '5.0.1');
+          } else {
+            Android.launch(a.c);
+          }
+        } else {
+          Android.launch(a.c);
+        }
+      } catch(e) {
+        try { Android.launch(a.c); } catch(e2) {}
+      }
       panel.style.display = 'none';
       info.textContent = (game ? 'OYUN: ' : 'UYG: ') + mode.toUpperCase();
       syncNativePreviewRect();
