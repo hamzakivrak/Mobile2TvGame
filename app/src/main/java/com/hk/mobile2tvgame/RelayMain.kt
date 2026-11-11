@@ -658,14 +658,30 @@ object RelayMain {
         val vLimit = vBuf.limit()
         val uLimit = uBuf.limit()
 
+        // Her satir tek seferde diziye kopyalanir (ByteBuffer.get(index) ile piksel piksel okumaktan cok daha hizli):
+        val vNeeded = (uvWidth - 1) * vPixelStride + 1
+        val uNeeded = (uvWidth - 1) * uPixelStride + 1
+        val vTmp = ByteArray(maxOf(vNeeded, 1))
+        val uTmp = ByteArray(maxOf(uNeeded, 1))
+
         for (r in 0 until uvHeight) {
             val vRowStart = r * vRowStride
             val uRowStart = r * uRowStride
+            val vAvail = (vLimit - vRowStart).coerceIn(0, vNeeded)
+            val uAvail = (uLimit - uRowStart).coerceIn(0, uNeeded)
+            if (vAvail > 0) {
+                vBuf.position(vRowStart)
+                vBuf.get(vTmp, 0, vAvail)
+            }
+            if (uAvail > 0) {
+                uBuf.position(uRowStart)
+                uBuf.get(uTmp, 0, uAvail)
+            }
             for (c in 0 until uvWidth) {
-                val vIdx = vRowStart + c * vPixelStride
-                val uIdx = uRowStart + c * uPixelStride
-                nv21[pos++] = if (vIdx < vLimit) vBuf.get(vIdx) else 128.toByte()
-                nv21[pos++] = if (uIdx < uLimit) uBuf.get(uIdx) else 128.toByte()
+                val vi = c * vPixelStride
+                val ui = c * uPixelStride
+                nv21[pos++] = if (vi < vAvail) vTmp[vi] else 128.toByte()
+                nv21[pos++] = if (ui < uAvail) uTmp[ui] else 128.toByte()
             }
         }
         return nv21
@@ -726,7 +742,7 @@ object RelayMain {
                                                 nv21Buf = imageToNv21(img, iw, ih, nv21Buf)
                                                 bos.reset()
                                                 YuvImage(nv21Buf, ImageFormat.NV21, iw, ih, null)
-                                                    .compressToJpeg(Rect(0, 0, iw, ih), 75, bos)
+                                                    .compressToJpeg(Rect(0, 0, iw, ih), 65, bos)
                                                 latestJpegFrame = bos.toByteArray()
                                                 lastJpegMs = now
                                                 synchronized(jpegNotifyLock) {
@@ -754,6 +770,10 @@ object RelayMain {
                     val inp = DataInputStream(BufferedInputStream(s.getInputStream(), 65536))
                     var curW = vw
                     var curH = vh
+                    // Karar dusurulursa (decoder mesgulse) sonraki P-kareler bozuk gorunur; bu yuzden
+                    // bir sonraki IDR (anahtar kare) gelene kadar P-kareleri hic beslemiyoruz:
+                    var needKey = true
+                    var needKeySince = System.currentTimeMillis()
 
                     while (webClientCount > 0) {
                         inp.readFully(h)
@@ -764,6 +784,8 @@ object RelayMain {
                                 curW = w
                                 curH = ht
                                 startDecoder(curW, curH)
+                                needKey = true
+                                needKeySince = System.currentTimeMillis()
                             }
                         } else {
                             val flags = bb.getLong(0)
@@ -773,12 +795,31 @@ object RelayMain {
                             inp.readFully(payload, 0, size)
                             if (codec == null) {
                                 startDecoder(curW, curH)
+                                needKey = true
+                                needKeySince = System.currentTimeMillis()
                             }
-                            val (nalCfg, _) = inspectH264Payload(payload, size)
+                            val (nalCfg, nalIdr) = inspectH264Payload(payload, size)
                             val isConfig = nalCfg || ((flags and (1L shl 62)) != 0L) || ((flags and (1L shl 63)) != 0L)
+                            val isKey = !isConfig && (nalIdr || ((flags and (1L shl 61)) != 0L))
                             val pts = flags and ((1L shl 61) - 1)
                             val c = codec ?: continue
-                            val inIdx = c.dequeueInputBuffer(50_000)
+
+                            if (isKey) needKey = false
+                            // Guvenlik: anahtar kare 2 sn icinde taninmazsa eski davranisa don (goruntu donmasin)
+                            if (needKey && !isConfig && (System.currentTimeMillis() - needKeySince) > 2000L) {
+                                needKey = false
+                            }
+                            // Anahtar kare bekleniyorsa P-kareleri atla (bozuk piksel yerine son saglam kare kalir)
+                            if (needKey && !isConfig && !isKey) continue
+
+                            // Giris tamponu bulunamazsa birkac kez tekrar dene; yine olmazsa
+                            // sonraki IDR'ye kadar P-kareleri atla:
+                            var inIdx = -1
+                            var tries = 0
+                            while (tries < 3 && inIdx < 0) {
+                                inIdx = c.dequeueInputBuffer(50_000)
+                                tries++
+                            }
                             if (inIdx >= 0) {
                                 val inBuf = c.getInputBuffer(inIdx)
                                 if (inBuf != null) {
@@ -789,6 +830,9 @@ object RelayMain {
                                         if (isConfig) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0
                                     )
                                 }
+                            } else if (!isConfig) {
+                                needKey = true
+                                needKeySince = System.currentTimeMillis()
                             }
                         }
                     }
