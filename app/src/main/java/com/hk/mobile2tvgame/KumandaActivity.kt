@@ -6,6 +6,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -16,9 +18,11 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Base64
 import android.view.Gravity
 import android.view.MotionEvent
@@ -37,6 +41,7 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
+import rikka.shizuku.Shizuku
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -54,7 +59,6 @@ import kotlin.concurrent.thread
 class KumandaActivity : Activity(), SensorEventListener {
 
     private val queue = LinkedBlockingQueue<String>()
-    private val iconCache = ConcurrentHashMap<String, String>()
     private lateinit var rootLayout: FrameLayout
     private lateinit var previewSurfaceView: SurfaceView
     private lateinit var web: WebView
@@ -86,11 +90,52 @@ class KumandaActivity : Activity(), SensorEventListener {
 
     private val assetUrl = "file:///android_asset/kumanda.html"
 
+    private val permListener = Shizuku.OnRequestPermissionResultListener { _, result ->
+        runOnUiThread {
+            streamStatusText = if (result == PackageManager.PERMISSION_GRANTED) {
+                "Shizuku izni verildi."
+            } else {
+                "Shizuku izni reddedildi."
+            }
+            pushStateToWeb()
+        }
+    }
+
     companion object {
         private const val GITHUB_API_RAW =
             "https://api.github.com/repos/hamzakivrak/Mobile2TvGame/contents/app/src/main/assets/kumanda.html"
         private const val GITHUB_CDN_RAW =
             "https://raw.githubusercontent.com/hamzakivrak/Mobile2TvGame/main/app/src/main/assets/kumanda.html"
+
+        private val iconCache = ConcurrentHashMap<String, String>()
+
+        @Volatile
+        private var streamProc: Process? = null
+
+        @Volatile
+        private var streamStatusText: String = "Hazir."
+
+        private val logLines = ArrayDeque<String>(60)
+        private val logLock = Any()
+
+        private fun appendLog(line: String) {
+            synchronized(logLock) {
+                if (logLines.size >= 50) logLines.removeFirst()
+                logLines.addLast(line)
+            }
+        }
+
+        private fun clearLogs() {
+            synchronized(logLock) {
+                logLines.clear()
+            }
+        }
+
+        private fun getLogsString(): String {
+            synchronized(logLock) {
+                return logLines.joinToString("\n")
+            }
+        }
     }
 
     private class LocalVideoDecoder(width: Int, height: Int, surface: Surface) {
@@ -141,6 +186,15 @@ class KumandaActivity : Activity(), SensorEventListener {
         }
     }
 
+    private fun pushStateToWeb() {
+        runOnUiThread {
+            if (!alive || !::web.isInitialized) return@runOnUiThread
+            try {
+                web.evaluateJavascript("if(window.onStreamStateChanged)window.onStreamStateChanged();", null)
+            } catch (_: Exception) {}
+        }
+    }
+
     inner class Bridge {
         @JavascriptInterface
         fun touch(action: Int, id: Int, x: Double, y: Double) {
@@ -181,6 +235,122 @@ class KumandaActivity : Activity(), SensorEventListener {
         }
 
         @JavascriptInterface
+        fun shizukuState(): String {
+            val running = try { Shizuku.pingBinder() } catch (_: Throwable) { false }
+            val granted = running && try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch (_: Throwable) { false }
+            val streaming = streamProc != null
+            return JSONObject()
+                .put("running", running)
+                .put("granted", granted)
+                .put("streaming", streaming)
+                .put("status", streamStatusText)
+                .put("logs", getLogsString())
+                .toString()
+        }
+
+        @JavascriptInterface
+        fun requestShizuku(): String {
+            return try {
+                if (!Shizuku.pingBinder()) {
+                    streamStatusText = "Shizuku calismiyor! Once Shizuku'yu acip Baslat'a basin."
+                    pushStateToWeb()
+                    "not_running"
+                } else if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                    streamStatusText = "Shizuku hazir (izin var)."
+                    pushStateToWeb()
+                    "granted"
+                } else {
+                    streamStatusText = "Shizuku izni isteniyor..."
+                    Shizuku.requestPermission(100)
+                    pushStateToWeb()
+                    "requested"
+                }
+            } catch (e: Throwable) {
+                streamStatusText = "Shizuku hatasi: ${e.message}"
+                pushStateToWeb()
+                "error"
+            }
+        }
+
+        @JavascriptInterface
+        fun startStream(display: String, appPkg: String, version: String): String {
+            try {
+                if (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                    streamStatusText = "Once Shizuku iznini verin!"
+                    pushStateToWeb()
+                    return "no_perm"
+                }
+                if (streamProc != null) {
+                    streamStatusText = "Yayin zaten calisiyor."
+                    pushStateToWeb()
+                    return "already_running"
+                }
+                val apk = applicationInfo.sourceDir
+                val v = version.trim().ifEmpty { "5.0.1" }
+                val d = display.trim().ifEmpty { "1920x1080/360" }
+                val a0 = appPkg.trim()
+                val a = if (a0.isEmpty() || a0.contains('/')) a0 else (
+                        try {
+                            packageManager.getLaunchIntentForPackage(a0)?.component?.flattenToShortString()
+                        } catch (_: Exception) {
+                            null
+                        } ?: a0)
+
+                clearLogs()
+                streamStatusText = "Yayin baslatildi, TV bekleniyor..."
+                appendLog("Sanal ekran: $d | Uygulama: ${a.ifEmpty { "(yok)" }}")
+                pushStateToWeb()
+
+                thread(isDaemon = true) {
+                    try {
+                        val m = Shizuku::class.java.getDeclaredMethod(
+                            "newProcess",
+                            Array<String>::class.java, Array<String>::class.java, String::class.java
+                        )
+                        m.isAccessible = true
+                        val sh = "export CLASSPATH='$apk'; exec /system/bin/app_process / " +
+                                "com.hk.mobile2tvgame.RelayMain '$apk' '$v' '$a' '$d' 27183 2>&1"
+                        val p = m.invoke(null, arrayOf("sh", "-c", sh), null, null) as Process
+                        streamProc = p
+                        pushStateToWeb()
+                        p.inputStream.bufferedReader().forEachLine { line ->
+                            appendLog(line)
+                            if (line.contains("TV baglandi")) {
+                                streamStatusText = "TV Baglandi (Yayin Aktif)"
+                            } else if (line.contains("TV bekleniyor")) {
+                                streamStatusText = "TV Bekleniyor... (TV'de uygulamayi acin)"
+                            }
+                            pushStateToWeb()
+                        }
+                        appendLog("(Yayin sureci sonlandi)")
+                        streamStatusText = "Yayin durdu."
+                        streamProc = null
+                        pushStateToWeb()
+                    } catch (e: Throwable) {
+                        appendLog("HATA: $e")
+                        streamStatusText = "Hata: ${e.message}"
+                        streamProc = null
+                        pushStateToWeb()
+                    }
+                }
+                return "started"
+            } catch (e: Throwable) {
+                streamStatusText = "Baslatma hatasi: ${e.message}"
+                pushStateToWeb()
+                return "error"
+            }
+        }
+
+        @JavascriptInterface
+        fun stopStream() {
+            try { streamProc?.destroy() } catch (_: Throwable) {}
+            streamProc = null
+            streamStatusText = "Yayin durduruldu."
+            appendLog("Kullanici tarafindan durduruldu.")
+            pushStateToWeb()
+        }
+
+        @JavascriptInterface
         fun apps(): String {
             val pm = packageManager
             val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -190,10 +360,15 @@ class KumandaActivity : Activity(), SensorEventListener {
                 .distinctBy { it.activityInfo.packageName }
                 .sortedBy { it.loadLabel(pm).toString().lowercase() }
                 .forEach {
+                    val ai = it.activityInfo.applicationInfo
+                    @Suppress("DEPRECATION")
+                    val isGame = (Build.VERSION.SDK_INT >= 26 && ai.category == ApplicationInfo.CATEGORY_GAME) ||
+                            ((ai.flags and ApplicationInfo.FLAG_IS_GAME) != 0)
                     arr.put(
                         JSONObject()
                             .put("n", it.loadLabel(pm).toString())
                             .put("c", ComponentName(it.activityInfo.packageName, it.activityInfo.name).flattenToShortString())
+                            .put("g", isGame)
                     )
                 }
             return arr.toString()
@@ -237,9 +412,60 @@ class KumandaActivity : Activity(), SensorEventListener {
         }
 
         @JavascriptInterface
+        fun exitKumanda() {
+            runOnUiThread {
+                finishAffinity()
+            }
+        }
+
+        @JavascriptInterface
+        fun openDevSettings() {
+            runOnUiThread {
+                openDeveloperOptions(this@KumandaActivity)
+            }
+        }
+
+        @JavascriptInterface
+        fun openShizuku() {
+            runOnUiThread {
+                openShizukuApp(this@KumandaActivity)
+            }
+        }
+
+        @JavascriptInterface
         fun refreshFromGithub() {
             syncHtmlFromGithub(forceReload = true)
         }
+    }
+
+    private fun openDeveloperOptions(ctx: Context) {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
+                putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            ctx.startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                ctx.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun openShizukuApp(ctx: Context) {
+        val pkg = "moe.shizuku.privileged.api"
+        try {
+            val launch = ctx.packageManager.getLaunchIntentForPackage(pkg)
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(launch)
+            } else {
+                ctx.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$pkg"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        } catch (_: Exception) {}
     }
 
     private fun updatePreviewLayout() {
@@ -279,6 +505,8 @@ class KumandaActivity : Activity(), SensorEventListener {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         )
         applyImmersiveUi()
+
+        try { Shizuku.addRequestPermissionResultListener(permListener) } catch (_: Throwable) {}
 
         rootLayout = FrameLayout(this)
         rootLayout.setBackgroundColor(Color.BLACK)
@@ -367,6 +595,7 @@ class KumandaActivity : Activity(), SensorEventListener {
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 view.evaluateJavascript("if(window.setOran)window.setOran($lastW,$lastH);", null)
+                view.evaluateJavascript("if(window.onStreamStateChanged)window.onStreamStateChanged();", null)
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -454,6 +683,7 @@ class KumandaActivity : Activity(), SensorEventListener {
     override fun onResume() {
         super.onResume()
         applyImmersiveUi()
+        pushStateToWeb()
         try {
             sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
                 sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
@@ -578,6 +808,7 @@ class KumandaActivity : Activity(), SensorEventListener {
     override fun onDestroy() {
         alive = false
         previewEnabled = false
+        try { Shizuku.removeRequestPermissionResultListener(permListener) } catch (_: Throwable) {}
         try { previewSocket?.close() } catch (_: Exception) {}
         queue.offer("")
         super.onDestroy()
