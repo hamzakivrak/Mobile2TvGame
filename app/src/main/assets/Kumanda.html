@@ -1,0 +1,1852 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Kumanda</title>
+<style>
+  :root{--bg:#0b0e14;--line:#2a3350;--acc:#4da3ff;--warn:#ff9f43;--ok:#2ecc71;--txt:#cfd8ff}
+  *{box-sizing:border-box;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;touch-action:none;
+    font-family:system-ui,sans-serif;color:var(--txt)}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  #bar{position:fixed;top:4px;left:50%;transform:translateX(-50%);display:flex;gap:4px;align-items:center;z-index:2;
+    flex-wrap:nowrap;white-space:nowrap;background:rgba(11,14,20,.78);padding:3px 6px;border-radius:11px;border:1px solid rgba(42,51,80,.7)}
+  #bar button{background:rgba(24,32,58,.9);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px}
+  #bar button.active{border-color:var(--warn);color:var(--warn)}
+  #bar button.on-btn{border-color:var(--ok);color:var(--ok);background:rgba(20,52,38,.9)}
+  #bar button.help-btn{border-color:var(--acc);color:#fff;background:#1d3566;font-weight:600}
+  #bar.collapsed > *:not(#minBarBtn){display:none !important}
+  #bar.collapsed{left:8px;transform:none;padding:2px}
+  #info{font:10.5px monospace;opacity:.85;min-width:76px;text-align:center}
+
+  /* Uygulamalar, Ayarlar ve Rehber Panelleri */
+  .modal{position:fixed;inset:0;background:rgba(11,14,20,.97);z-index:5;display:none;flex-direction:column;
+    padding:12px 18px;box-sizing:border-box}
+  .modal .top{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+  .modal .top h3{margin:0;flex:1;font-size:17px;color:var(--acc)}
+  #q{flex:1;background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:15px;-webkit-user-select:text;user-select:text}
+  .modal .top button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:13px}
+
+  /* Ikonlu Uygulama Izgarasi */
+  #applist{overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:9px;
+    align-content:start;touch-action:pan-y;padding-bottom:16px}
+  .app-item{background:#151d33;color:var(--txt);border:1px solid var(--line);border-radius:12px;
+    padding:9px 10px;font-size:13.5px;text-align:left;display:flex;align-items:center;gap:10px;
+    position:relative;overflow:hidden;transition:border-color .15s,background .15s}
+  .app-item:active{background:#1f2c4d;border-color:var(--acc)}
+  .app-item.recent{border-color:rgba(77,163,255,.45);background:#17223d}
+  .app-icon{width:42px;height:42px;border-radius:10px;flex-shrink:0;object-fit:contain;background:#0e1424;
+    box-shadow:0 2px 6px rgba(0,0,0,.35)}
+  .app-meta{display:flex;flex-direction:column;min-width:0;flex:1;gap:2px}
+  .app-name{font-weight:600;font-size:13.5px;color:#e3ecff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .app-pkg{font-size:10.5px;color:#6e7fa8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .app-rec-badge{font-size:9.5px;color:var(--warn);font-weight:700;letter-spacing:.3px}
+
+  /* Ayarlar Icerigi */
+  .settings-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;touch-action:pan-y;padding-bottom:12px}
+  .s-card{background:#13192b;border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+  .s-card h4{margin:0;color:var(--acc);font-size:14px;border-bottom:1px solid var(--line);padding-bottom:5px}
+  .s-row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13.5px}
+  .s-row label{flex:1}
+  .s-row input[type="checkbox"]{width:20px;height:20px;accent-color:var(--acc)}
+  .s-row input[type="range"]{width:115px;accent-color:var(--acc)}
+  .s-row select{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:13px;max-width:190px}
+  .s-sub{font-size:11px;color:#7f8db8}
+
+  /* Rehber (Beni Oku) Icerigi */
+  .guide-scroll{overflow-y:auto;touch-action:pan-y;display:flex;flex-direction:column;gap:10px;padding-bottom:16px;line-height:1.45;font-size:13.5px}
+  .g-box{background:#13192b;border:1px solid var(--line);border-radius:10px;padding:11px 14px}
+  .g-box.warn{border-color:var(--warn);background:#1c1814}
+  .g-box h4{margin:0 0 6px 0;color:var(--acc);font-size:14.5px}
+  .g-box.warn h4{color:var(--warn)}
+  .g-box ol, .g-box ul{margin:4px 0 0 0;padding-left:20px}
+  .g-box li{margin-bottom:4px}
+  .g-badge{display:inline-block;background:#1e294a;color:#7fbfff;border-radius:5px;padding:1px 6px;font-family:monospace;font-size:12px}
+  .g-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:8px;border-top:1px solid var(--line)}
+  .g-footer label{display:flex;align-items:center;gap:8px;font-size:13px;color:#9ab0e6}
+  .g-footer button{background:var(--acc);color:#081021;border:none;border-radius:9px;padding:9px 20px;font-size:14px;font-weight:700}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <button id="minBarBtn" title="Ust Cubugu Kucult/Buyut">▲</button>
+  <button id="helpBtn" class="help-btn">📖 Beni Oku</button>
+  <button id="modeBtn">Mod: IMLEC</button>
+  <button id="previewBtn">📺 Ekran</button>
+  <button id="ctrlStyleBtn" style="display:none">Sol: 🕹️ Joystick</button>
+  <button id="editBtn" style="display:none">Tus Hedefi</button>
+  <button id="resetBtn" style="display:none">Sifirla</button>
+  <button id="appBtn">Uygulamalar</button>
+  <button id="setBtn">⚙ Ayarlar</button>
+  <button id="backBtn">Geri</button>
+  <button id="syncBtn" title="GitHub'dan Yenile">↻</button>
+  <span id="info">-</span>
+</div>
+
+<!-- Uygulama Secici -->
+<div id="panel" class="modal">
+  <div class="top">
+    <input id="q" type="search" placeholder="Uygulama veya oyun ara...">
+    <button id="closeBtn">Kapat</button>
+  </div>
+  <div id="applist"></div>
+</div>
+
+<!-- Ayarlar Paneli -->
+<div id="settingsModal" class="modal">
+  <div class="top">
+    <h3>Kumanda, Canli Ekran ve Oyun Kolu Ayarlari</h3>
+    <button id="closeSetBtn">Kaydet & Kapat</button>
+  </div>
+  <div class="settings-grid">
+    <!-- Canli Ekran ve Ayna Ayarlari -->
+    <div class="s-card">
+      <h4>📺 Canli Ekran Onizleme & Ayna</h4>
+      <div class="s-row">
+        <label for="chkShowScreen">Telefonda Oyun / Program Ekranini Goster</label>
+        <input id="chkShowScreen" type="checkbox">
+      </div>
+      <div class="s-sub">Acildiginda TV'deki oyun/program telefon ekraninda da canli gorunur; <b>Mod: AYNA</b> ile ekranda nereye dokunursaniz dogrudan orasi tiklanir!</div>
+      <div class="s-row">
+        <label for="chkFullArea">Imlec ve Ayna Ekranin Tamamini Kaplasin</label>
+        <input id="chkFullArea" type="checkbox">
+      </div>
+      <div class="s-row">
+        <label for="chkHybridTap">KUMANDA Modunda Bos Yere Dokununca Oyuna Tikla</label>
+        <input id="chkHybridTap" type="checkbox">
+      </div>
+      <div class="s-row">
+        <label>KUMANDA Arkaplan Karartma: <span id="lblScreenDim">%20</span></label>
+        <input id="rngScreenDim" type="range" min="0" max="0.7" step="0.05" value="0.20">
+      </div>
+    </div>
+
+    <!-- Oyun Kolu (KUMANDA) Ayarlari -->
+    <div class="s-card">
+      <h4>🎮 Oyun Kolu (Mod: KUMANDA)</h4>
+      <div class="s-row">
+        <label for="selLeftStyle">Sol Kontrol Tipi</label>
+        <select id="selLeftStyle">
+          <option value="joystick">🕹️ Analog Joystick</option>
+          <option value="dpad">➕ Yon Oklari (Alt/Ust/Sol/Sag)</option>
+          <option value="wheel">🛞 Direksiyon (Dokunmatik + Egim)</option>
+        </select>
+      </div>
+      <div class="s-row">
+        <label for="selSteerTarget">Oklar / Direksiyon Oyun Modu</label>
+        <select id="selSteerTarget">
+          <option value="analog">Sanal Joystick Cek (Analog)</option>
+          <option value="buttons">Ayri Yon Tuslarina Bas (Yaris/Asphalt)</option>
+        </select>
+      </div>
+      <div class="s-sub">Asphalt gibi "ekrana dokunarak donulen" oyunlarda <b>Ayri Yon Tuslarina Bas</b> secenegini, normal joystickli oyunlarda <b>Sanal Joystick Cek</b> secenegini kullanin.</div>
+      <div class="s-row">
+        <label>Direksiyon Hassasiyeti: <span id="lblTiltSens">1.5x</span></label>
+        <input id="rngTiltSens" type="range" min="0.6" max="3.0" step="0.2" value="1.5">
+      </div>
+    </div>
+
+    <!-- Kaydirma Cubuklari -->
+    <div class="s-card">
+      <h4>⇅ Sayfa Kaydirma Cubuklari</h4>
+      <div class="s-row">
+        <label for="chkVBar">Sag Kenar Dikey Kaydirma Cubugu</label>
+        <input id="chkVBar" type="checkbox">
+      </div>
+      <div class="s-row">
+        <label for="chkHBar">Alt Kenar Yatay Kaydirma Cubugu</label>
+        <input id="chkHBar" type="checkbox">
+      </div>
+      <div class="s-row">
+        <label for="chkTwoFinger">2 Parmakla Kaydirma + Sinirda Devam</label>
+        <input id="chkTwoFinger" type="checkbox">
+      </div>
+      <div class="s-row">
+        <label for="selScrollDir">Kaydirma Yonu</label>
+        <select id="selScrollDir">
+          <option value="wheel">Tekerlek (Asagi cek = Sayfa iner)</option>
+          <option value="touch">Dokunmatik (Yukari it = Sayfa iner)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Hiz ve Boyut -->
+    <div class="s-card">
+      <h4>⚡ Hiz ve Boyut</h4>
+      <div class="s-row">
+        <label>Kaydirma Hizi: <span id="lblScrollSpeed">1.6x</span></label>
+        <input id="rngScrollSpeed" type="range" min="0.6" max="3.2" step="0.2" value="1.6">
+      </div>
+      <div class="s-row">
+        <label>Imlec Hizi: <span id="lblCurSpeed">1.3x</span></label>
+        <input id="rngCurSpeed" type="range" min="0.6" max="2.6" step="0.1" value="1.3">
+      </div>
+      <div class="s-row">
+        <label>Cubuk Genisligi: <span id="lblBarSize">52px</span></label>
+        <input id="rngBarSize" type="range" min="36" max="80" step="4" value="52">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Kurulum ve Kullanim Rehberi (Beni Oku) Modal -->
+<div id="guideModal" class="modal">
+  <div class="top">
+    <h3>📖 Mobile2TvGame Kurulum ve Kullanim Rehberi (Beni Oku)</h3>
+    <button id="closeGuideTopBtn">Kapat</button>
+  </div>
+  <div class="guide-scroll">
+    <div class="g-box">
+      <h4>1. Sistem ve Ag Gereksinimleri</h4>
+      <ul>
+        <li><b>Android Surumu:</b> Telefon veya tabletiniz <b>Android 11 veya uzeri</b> olmalidir.</li>
+        <li><b>Ayni Wi-Fi Agi:</b> Telefon/tablet ile Android TV <b>ayni Wi-Fi agina</b> bagli olmalidir.</li>
+        <li><b>Kurulacak APK'lar:</b> Telefon veya tablete <span class="g-badge">Telefon-APK (app-debug.apk)</span>, televizyona ise <span class="g-badge">TV-APK (tv-debug.apk)</span> kurulmalidir.</li>
+      </ul>
+    </div>
+
+    <div class="g-box">
+      <h4>2. Gelistirici Seceneklerini Acma (Telefon / Tablet)</h4>
+      <ol>
+        <li>Cihazinizda <b>Ayarlar &gt; Telefon/Tablet Hakkinda</b> menusune girin.</li>
+        <li><b>Derleme Numarasi (Build Number)</b> (Xiaomi cihazlarda <i>MIUI / HyperOS Surumu</i>) uzerine art arda <b>7 kez</b> dokunun.</li>
+        <li><b>Ayarlar &gt; Sistem / Ek Ayarlar &gt; Gelistirici Secenekleri</b> menusune girin:
+          <ul>
+            <li><b>USB Hata Ayiklama</b> secenegini <b>ACIN</b>.</li>
+            <li><b>Kablosuz Hata Ayiklama (Wireless Debugging)</b> secenegini <b>ACIN</b>.</li>
+          </ul>
+        </li>
+      </ol>
+    </div>
+
+    <div class="g-box warn">
+      <h4>⚠️ 3. Xiaomi / Redmi / POCO / Oppo / Realme Cihazlar Icin ZORUNLU Dokunma Ayari</h4>
+      <ul>
+        <li><b>Xiaomi / Redmi / POCO (MIUI &amp; HyperOS):</b> Gelistirici Secenekleri icinde biraz asagi inip <b>"USB hata ayiklama (Guvenlik ayarlari)"</b> secenegini mutlaka <b>ACIN</b>.</li>
+        <li><b>Oppo / Realme / OnePlus (ColorOS &amp; RealmeUI):</b> Gelistirici Seceneklerinin en altindaki <b>"Izin izlemeyi devre disi birak"</b> secenegini <b>ACIN</b>.</li>
+      </ul>
+    </div>
+
+    <div class="g-box">
+      <h4>4. Shizuku Kurulumu ve Baslatilmasi</h4>
+      <ol>
+        <li>Google Play Store'dan <b>Shizuku</b> uygulamasini telefon/tabletinize indirip acin.</li>
+        <li>Shizuku icinde <b>"Kablosuz hata ayiklama ile baslat"</b> altindaki <b>"Eslestirme (Pairing)"</b> dugmesine basin.</li>
+        <li>Gelistirici Secenekleri &gt; <b>Kablosuz Hata Ayiklama</b> menusunden <b>"Cihazi eslestirme koduyla eslestir"</b> secenegine dokunun ve <b>6 haneli kodu</b> bildirim cubugundaki Shizuku kutusuna girin.</li>
+        <li>Shizuku ana ekranina donup <b>"Baslat (Start)"</b> dugmesine basin.</li>
+      </ol>
+    </div>
+
+    <div class="g-box">
+      <h4>5. Canli Ekran (📺 Ekran), Ayna ve Oyun Kolu (KUMANDA) Kullanimi</h4>
+      <ul>
+        <li><b>📺 Ekran (Canli Onizleme):</b> Ust bardaki <b>"📺 Ekran"</b> butonuna (veya Ayarlar'a) basarak TV'deki oyun/programi telefon ekraninda da canli gorebilirsiniz!</li>
+        <li><b>Mod: AYNA (Dogrudan Dokunmatik):</b> <b>📺 Ekran</b> acikken oyunun veya programin neresine dokunursaniz dogrudan orasi aktif olur. Sol ustteki <b>▲</b> dugmesiyle ust cubugu kucultebilirsiniz.</li>
+        <li><b>Mod: KUMANDA (🕹️ Joystick / ➕ Oklar / 🛞 Direksiyon):</b> Parmaginizi bastiginiz anda yakalar, parmaginizi cektiginiz anda aninda birakir.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="g-footer">
+    <label><input id="chkHideGuide" type="checkbox"> Acilista otomatik gosterme (ustteki "📖 Beni Oku" butonundan her zaman acilabilir)</label>
+    <button id="closeGuideBtn">Anladim, Basla</button>
+  </div>
+</div>
+
+<script>
+addEventListener('contextmenu', e => e.preventDefault(), {passive:false});
+addEventListener('selectstart', e => e.preventDefault(), {passive:false});
+
+/* ============ KULLANICI AYARLARI ============ */
+const DEFAULT_SETTINGS = {
+  showScreen: false,
+  fullScreenArea: true,
+  hybridTap: true,
+  screenDim: 0.20,
+  vBar: true,
+  hBar: true,
+  twoFinger: true,
+  scrollDir: 'wheel',
+  scrollSpeed: 1.6,
+  curSpeed: 1.3,
+  barSize: 52,
+  leftStyle: 'joystick',
+  steerTarget: 'analog',
+  tiltSens: 1.5
+};
+
+let CFG = Object.assign({}, DEFAULT_SETTINGS);
+try {
+  const s = JSON.parse(localStorage.getItem('m2t_cfg_v5') || localStorage.getItem('m2t_cfg_v4') || '{}');
+  CFG = Object.assign({}, DEFAULT_SETTINGS, s);
+} catch(e) {}
+
+function saveCfg(){
+  try { localStorage.setItem('m2t_cfg_v5', JSON.stringify(CFG)); } catch(e) {}
+}
+
+/* ============ VARSAYILAN OYUN PROFILI ============ */
+const DEFAULT_CONTROLS = [
+  {tip:"cubuk", ad:"Yon", x:0.20, y:0.62, r:0.18, oyun:{x:0.18, y:0.72}, menzil:0.15},
+  {tip:"dugme", ad:"A",   x:0.84, y:0.66, r:0.10, oyun:{x:0.86, y:0.75}},
+  {tip:"dugme", ad:"B",   x:0.70, y:0.78, r:0.09, oyun:{x:0.74, y:0.85}},
+  {tip:"dugme", ad:"X",   x:0.72, y:0.46, r:0.08, oyun:{x:0.76, y:0.55}},
+  {tip:"dugme", ad:"Y",   x:0.86, y:0.40, r:0.08, oyun:{x:0.88, y:0.50}},
+  {tip:"yon_ok", ad:"Sol", yon:"L", x:0.11, y:0.62, r:0.085, oyun:{x:0.14, y:0.75}},
+  {tip:"yon_ok", ad:"Sag", yon:"R", x:0.29, y:0.62, r:0.085, oyun:{x:0.86, y:0.75}},
+  {tip:"yon_ok", ad:"Ust", yon:"U", x:0.20, y:0.43, r:0.085, oyun:{x:0.18, y:0.55}},
+  {tip:"yon_ok", ad:"Alt", yon:"D", x:0.20, y:0.81, r:0.085, oyun:{x:0.18, y:0.88}}
+];
+
+let controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
+try {
+  const savedProfile = localStorage.getItem('m2t_controls_v3');
+  if (savedProfile) {
+    const parsed = JSON.parse(savedProfile);
+    if (Array.isArray(parsed) && parsed.length >= 9) controls = parsed;
+  }
+} catch(e) {}
+
+function saveControls(){
+  try { localStorage.setItem('m2t_controls_v3', JSON.stringify(controls)); } catch(e) {}
+}
+
+function getJoyCtrl(){ return controls.find(c => c.tip === 'cubuk') || controls[0]; }
+function getActionCtrls(){ return controls.filter(c => c.tip === 'dugme'); }
+function getDpadCtrls(){ return controls.filter(c => c.tip === 'yon_ok'); }
+
+let TV_ORAN = 16/9;
+const cv = document.getElementById('cv'), cx = cv.getContext('2d');
+const bar = document.getElementById('bar'), minBarBtn = document.getElementById('minBarBtn');
+const info = document.getElementById('info'), modeBtn = document.getElementById('modeBtn');
+const previewBtn = document.getElementById('previewBtn');
+const ctrlStyleBtn = document.getElementById('ctrlStyleBtn');
+const editBtn = document.getElementById('editBtn'), resetBtn = document.getElementById('resetBtn');
+let W=0, H=0, area={x:0,y:0,w:0,h:0};
+let vBarRect = null, hBarRect = null;
+
+const MODES = ['imlec', 'ayna', 'kumanda'];
+const LEFT_STYLES = ['joystick', 'dpad', 'wheel'];
+const LEFT_LABELS = {
+  joystick: 'Sol: 🕹️ Joystick',
+  dpad:     'Sol: ➕ Oklar',
+  wheel:    'Sol: 🛞 Direksiyon'
+};
+
+let mode = 'imlec';
+try {
+  const saved = localStorage.getItem('m2t_mode');
+  if (MODES.includes(saved)) mode = saved;
+} catch(e) {}
+
+let curX = 0.5, curY = 0.5;
+let maxTouchesInGesture = 0;
+let multiTouchEndedAt = 0;
+let twoFingerPrev = null;
+
+let editMode = false;
+let selectedCtrl = null;
+
+let wheelState = {
+  active: false,
+  touchControlled: false,
+  angle: 0,
+  rawAngle: 0,
+  calibOffset: 0,
+  hasSensor: false
+};
+
+window.setOran = function(w, h) {
+  if (w > 0 && h > 0) {
+    const newOran = w / h;
+    if (Math.abs(newOran - TV_ORAN) > 0.001) {
+      TV_ORAN = newOran;
+      computeLayout();
+      draw();
+    }
+  }
+};
+
+function send(a,id,nx,ny){
+  nx = Math.min(1, Math.max(0, nx)); ny = Math.min(1, Math.max(0, ny));
+  try { if (window.Android) Android.touch(a,id,nx,ny); } catch(e) {}
+}
+
+function isAnyModalOpen(){
+  return (
+    document.getElementById('panel').style.display === 'flex' ||
+    document.getElementById('settingsModal').style.display === 'flex' ||
+    document.getElementById('guideModal').style.display === 'flex'
+  );
+}
+
+function syncNativePreviewRect(){
+  if (!W || !H) return;
+  const wantPreview = !!CFG.showScreen && !isAnyModalOpen();
+  const nx = Math.max(0, Math.min(1, area.x / W));
+  const ny = Math.max(0, Math.min(1, area.y / H));
+  const nw = Math.max(0.05, Math.min(1, area.w / W));
+  const nh = Math.max(0.05, Math.min(1, area.h / H));
+  try {
+    if (window.Android && typeof Android.setPreviewRect === 'function') {
+      Android.setPreviewRect(nx, ny, nw, nh, wantPreview);
+    }
+  } catch(e) {}
+}
+
+/* ============ CANLI TUTMA & 5-ADIMLI YUMUSAK JOYSTICK YAKALAMA ============ */
+let jitterToggle = 1;
+setInterval(() => {
+  if (mode !== 'kumanda' || editMode) return;
+  jitterToggle = -jitterToggle;
+  const eps = 0.0004 * jitterToggle;
+
+  for (const a of active.values()) {
+    if (a.ramping) continue;
+    if (a.kind === 'cubuk' || a.kind === 'dugme' || a.kind === 'yon_ok' || a.kind === 'wheel_touch') {
+      if (a.kind === 'wheel_touch' && CFG.steerTarget === 'buttons' && !a.heldSide) continue;
+      send(2, a.p, a.nx + eps, a.ny);
+    }
+  }
+}, 35);
+
+function startSmoothAnalogHold(state, startX, startY, targetX, targetY){
+  if (state.rampTimer) { clearInterval(state.rampTimer); state.rampTimer = null; }
+  state.nx = targetX;
+  state.ny = targetY;
+  send(0, state.p, startX, startY);
+
+  const dist = Math.hypot(targetX - startX, targetY - startY);
+  if (dist < 0.008) {
+    state.ramping = false;
+    return;
+  }
+  state.ramping = true;
+  const steps = 5;
+  let step = 0;
+  state.rampTimer = setInterval(() => {
+    if (active.get(state.id) !== state) {
+      clearInterval(state.rampTimer);
+      state.rampTimer = null;
+      return;
+    }
+    step++;
+    const t = step / steps;
+    const curPosX = startX + (state.nx - startX) * t;
+    const curPosY = startY + (state.ny - startY) * t;
+    send(2, state.p, curPosX, curPosY);
+    if (step >= steps) {
+      clearInterval(state.rampTimer);
+      state.rampTimer = null;
+      state.ramping = false;
+    }
+  }, 9);
+}
+
+/* ============ DIREKSIYON (DOKUNMATIK SIMIT + SENSOR) MOTORU ============ */
+window.onNativeTilt = function(normTilt) {
+  if (mode !== 'kumanda' || CFG.leftStyle !== 'wheel' || editMode) return;
+  wheelState.hasSensor = true;
+  wheelState.rawAngle = normTilt;
+  if (wheelState.active && !wheelState.touchControlled) {
+    const clamped = Math.min(1, Math.max(-1, (normTilt - wheelState.calibOffset) * CFG.tiltSens));
+    wheelState.angle = wheelState.angle * 0.6 + clamped * 0.4;
+    updateWheelTouchTarget();
+    draw();
+  }
+};
+
+addEventListener('devicemotion', (e) => {
+  if (mode !== 'kumanda' || CFG.leftStyle !== 'wheel' || editMode) return;
+  const ag = e.accelerationIncludingGravity;
+  if (!ag || (ag.x === null && ag.y === null)) return;
+  const orient = (window.screen && screen.orientation && typeof screen.orientation.angle === 'number')
+    ? screen.orientation.angle
+    : (window.orientation || 90);
+  const sign = (orient === 270 || orient === -90) ? -1 : 1;
+  const norm = ((ag.y || 0) * sign) / 6.5;
+  window.onNativeTilt(norm);
+}, true);
+
+function updateWheelTouchTarget(){
+  for (const a of active.values()) {
+    if (a.kind === 'wheel_touch') {
+      const joy = getJoyCtrl();
+      if (CFG.steerTarget === 'analog') {
+        a.nx = joy.oyun.x + (wheelState.angle * joy.menzil) / TV_ORAN;
+        a.ny = joy.oyun.y;
+        if (!a.ramping) send(2, a.p, a.nx, a.ny);
+      } else {
+        const leftBtn = getDpadCtrls().find(c => c.yon === 'L');
+        const rightBtn = getDpadCtrls().find(c => c.yon === 'R');
+        const wantSide = (wheelState.angle < -0.12) ? 'L' : ((wheelState.angle > 0.12) ? 'R' : null);
+        if (wantSide !== a.heldSide) {
+          if (a.heldSide) send(1, a.p, a.nx, a.ny);
+          a.heldSide = wantSide;
+          if (wantSide === 'L' && leftBtn) {
+            a.nx = leftBtn.oyun.x; a.ny = leftBtn.oyun.y;
+            send(0, a.p, a.nx, a.ny);
+          } else if (wantSide === 'R' && rightBtn) {
+            a.nx = rightBtn.oyun.x; a.ny = rightBtn.oyun.y;
+            send(0, a.p, a.nx, a.ny);
+          }
+        }
+      }
+      info.textContent = 'DIREKSIYON: ' + (wheelState.angle >= 0 ? '+' : '') + (wheelState.angle * 60).toFixed(0) + '°';
+    }
+  }
+}
+
+function updateTopBar(){
+  modeBtn.textContent = 'Mod: ' + mode.toUpperCase();
+  previewBtn.classList.toggle('on-btn', !!CFG.showScreen);
+  previewBtn.textContent = CFG.showScreen ? '📺 Ekran: ACIK' : '📺 Ekran';
+  if (mode === 'kumanda') {
+    ctrlStyleBtn.style.display = 'inline-block';
+    ctrlStyleBtn.textContent = LEFT_LABELS[CFG.leftStyle] || LEFT_LABELS.joystick;
+    editBtn.style.display = 'inline-block';
+    resetBtn.style.display = editMode ? 'inline-block' : 'none';
+    editBtn.classList.toggle('active', editMode);
+    editBtn.textContent = editMode ? 'Kaydet / Bitir' : 'Tus Hedefi';
+  } else {
+    editMode = false;
+    selectedCtrl = null;
+    ctrlStyleBtn.style.display = 'none';
+    editBtn.style.display = 'none';
+    resetBtn.style.display = 'none';
+  }
+}
+
+function computeLayout(){
+  const bs = CFG.barSize;
+  const showV = (mode !== 'kumanda' && CFG.vBar);
+  const showH = (mode !== 'kumanda' && CFG.hBar);
+  const rightPad = showV ? bs : 0;
+  const bottomPad = showH ? bs : 0;
+
+  if (CFG.fullScreenArea || mode === 'kumanda') {
+    area = {
+      x: 0,
+      y: 0,
+      w: Math.max(100, W - rightPad),
+      h: Math.max(100, H - bottomPad)
+    };
+  } else {
+    const topPad = 42;
+    const availW = Math.max(100, W - rightPad - 8);
+    const availH = Math.max(100, H - topPad - bottomPad - 4);
+    let aw = availW, ah = aw / TV_ORAN;
+    if (ah > availH) { ah = availH; aw = ah * TV_ORAN; }
+    area = {
+      x: (availW - aw) / 2,
+      y: topPad + (availH - ah) / 2,
+      w: aw,
+      h: ah
+    };
+  }
+
+  if (showV) {
+    vBarRect = { x: W - bs, y: 0, w: bs, h: H - bottomPad, btnH: 44 };
+  } else {
+    vBarRect = null;
+  }
+
+  if (showH) {
+    hBarRect = { x: 0, y: H - bs, w: W - rightPad, h: bs, btnW: 48 };
+  } else {
+    hBarRect = null;
+  }
+
+  syncNativePreviewRect();
+}
+
+function resize(){
+  const d = window.devicePixelRatio || 1;
+  W = innerWidth; H = innerHeight;
+  cv.width = W*d; cv.height = H*d;
+  cx.setTransform(d,0,0,d,0,0);
+  computeLayout();
+  updateTopBar();
+  draw();
+}
+addEventListener('resize', resize);
+
+/* ============ KESINTISIZ CIFT YONLU + SINIRDA/DISARIDA OTOMATIK KAYDIRMA MOTORU ============ */
+const SCROLL_PID = 9;
+let scroller = {
+  down: false,
+  resetting: false,
+  sx: 0.5,
+  sy: 0.5,
+  lastSignX: 0,
+  lastSignY: 0,
+  thumbV: 0.5,
+  thumbH: 0.5,
+  edgeVX: 0,
+  edgeVY: 0,
+  edgeTimer: null,
+  animTimer: null
+};
+
+function startScrollStroke(moveX, moveY){
+  scroller.down = true;
+  scroller.sx = 0.50;
+  scroller.sy = 0.50;
+  send(0, SCROLL_PID, scroller.sx, scroller.sy);
+
+  const len = Math.hypot(moveX, moveY) || 1;
+  const slopX = (moveX / len) * 0.038;
+  const slopY = (moveY / len) * 0.038;
+  scroller.sx = Math.min(0.88, Math.max(0.12, scroller.sx + slopX + moveX));
+  scroller.sy = Math.min(0.88, Math.max(0.12, scroller.sy + slopY + moveY));
+  send(2, SCROLL_PID, scroller.sx, scroller.sy);
+}
+
+function feedScrollDelta(normDx, normDy){
+  if (scroller.resetting) return;
+  if (scroller.animTimer) { clearInterval(scroller.animTimer); scroller.animTimer = null; }
+
+  const dirSign = (CFG.scrollDir === 'wheel') ? -1 : 1;
+  const moveX = normDx * CFG.scrollSpeed * dirSign;
+  const moveY = normDy * CFG.scrollSpeed * dirSign;
+  if (Math.abs(moveX) < 0.0001 && Math.abs(moveY) < 0.0001) return;
+
+  scroller.thumbV = Math.min(1, Math.max(0, scroller.thumbV + normDy * 1.3));
+  scroller.thumbH = Math.min(1, Math.max(0, scroller.thumbH + normDx * 1.3));
+
+  const curSignX = Math.abs(moveX) > 0.001 ? Math.sign(moveX) : scroller.lastSignX;
+  const curSignY = Math.abs(moveY) > 0.001 ? Math.sign(moveY) : scroller.lastSignY;
+
+  if (!scroller.down) {
+    scroller.lastSignX = curSignX;
+    scroller.lastSignY = curSignY;
+    startScrollStroke(moveX, moveY);
+    return;
+  }
+
+  scroller.lastSignX = curSignX;
+  scroller.lastSignY = curSignY;
+
+  let nx = scroller.sx + moveX;
+  let ny = scroller.sy + moveY;
+
+  if (nx < 0.10 || nx > 0.90 || ny < 0.10 || ny > 0.90) {
+    send(1, SCROLL_PID, scroller.sx, scroller.sy);
+    scroller.down = false;
+    scroller.resetting = true;
+    setTimeout(() => {
+      scroller.resetting = false;
+      if (scroller.edgeVX !== 0 || scroller.edgeVY !== 0) {
+        feedScrollDelta(scroller.edgeVX, scroller.edgeVY);
+      }
+    }, 40);
+  } else {
+    scroller.sx = nx;
+    scroller.sy = ny;
+    send(2, SCROLL_PID, scroller.sx, scroller.sy);
+  }
+}
+
+function setEdgeAutoScroll(vx, vy){
+  scroller.edgeVX = vx;
+  scroller.edgeVY = vy;
+  if (vx !== 0 || vy !== 0) {
+    if (!scroller.edgeTimer) {
+      scroller.edgeTimer = setInterval(() => {
+        if (scroller.edgeVX === 0 && scroller.edgeVY === 0) {
+          clearInterval(scroller.edgeTimer);
+          scroller.edgeTimer = null;
+          return;
+        }
+        feedScrollDelta(scroller.edgeVX, scroller.edgeVY);
+        draw();
+      }, 28);
+    }
+  } else if (scroller.edgeTimer) {
+    clearInterval(scroller.edgeTimer);
+    scroller.edgeTimer = null;
+  }
+}
+
+function finishScrollGesture(){
+  setEdgeAutoScroll(0, 0);
+  if (scroller.down) {
+    send(1, SCROLL_PID, scroller.sx, scroller.sy);
+    scroller.down = false;
+  }
+  scroller.resetting = false;
+  scroller.thumbV = 0.5;
+  scroller.thumbH = 0.5;
+}
+
+function triggerSmoothSwipe(dirX, dirY){
+  finishScrollGesture();
+  if (scroller.animTimer) { clearInterval(scroller.animTimer); scroller.animTimer = null; }
+  const startX = 0.50;
+  const startY = 0.50;
+  const endX   = 0.50 + dirX * 0.34;
+  const endY   = 0.50 + dirY * 0.36;
+  const steps = 8;
+  let step = 0;
+  send(0, SCROLL_PID, startX, startY);
+  send(2, SCROLL_PID, startX + dirX * 0.05, startY + dirY * 0.05);
+  scroller.animTimer = setInterval(() => {
+    step++;
+    const t = step / steps;
+    const cxPos = startX + (endX - startX) * t;
+    const cyPos = startY + (endY - startY) * t;
+    if (step < steps) {
+      send(2, SCROLL_PID, cxPos, cyPos);
+    } else {
+      send(2, SCROLL_PID, endX, endY);
+      send(1, SCROLL_PID, endX, endY);
+      clearInterval(scroller.animTimer);
+      scroller.animTimer = null;
+    }
+  }, 14);
+}
+
+const idmap = new Map();
+function pid(t){
+  if (!idmap.has(t.identifier)) {
+    const used = new Set(idmap.values());
+    let n = 0;
+    while (used.has(n) || n === SCROLL_PID) n++;
+    idmap.set(t.identifier, n);
+  }
+  return idmap.get(t.identifier);
+}
+const active = new Map();
+
+function getVisibleGamepadControls(){
+  const actions = getActionCtrls();
+  if (CFG.leftStyle === 'joystick') {
+    return [getJoyCtrl(), ...actions];
+  } else if (CFG.leftStyle === 'dpad') {
+    if (CFG.steerTarget === 'analog' && editMode) {
+      return [getJoyCtrl(), ...getDpadCtrls(), ...actions];
+    }
+    return [...getDpadCtrls(), ...actions];
+  } else {
+    if (editMode) {
+      return (CFG.steerTarget === 'analog') ? [getJoyCtrl(), ...actions] : [...getDpadCtrls(), ...actions];
+    }
+    return [getJoyCtrl(), ...actions];
+  }
+}
+
+function hitGamepadControl(x, y){
+  const list = getVisibleGamepadControls();
+  let best = null, bestDist = 1e9;
+  for (const c of list) {
+    const dx = x - c.x*W, dy = y - c.y*H;
+    const d = Math.hypot(dx, dy);
+    const grabMult = (c.tip === 'cubuk' && !editMode) ? 1.45 : 1.22;
+    if (d <= c.r * H * grabMult && d < bestDist) {
+      best = c;
+      bestDist = d;
+    }
+  }
+  if (best) return best;
+  if (!editMode && !CFG.showScreen && (CFG.leftStyle === 'joystick' || CFG.leftStyle === 'wheel') && x < W * 0.42 && y > 55) {
+    return getJoyCtrl();
+  }
+  return null;
+}
+
+function inRect(x, y, r){
+  return !!(r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+}
+
+function getAreaTouches(touchList){
+  const res = [];
+  for (const t of touchList) {
+    const a = active.get(t.identifier);
+    if (a && a.kind === 'trackpad') {
+      res.push(t);
+    }
+  }
+  return res;
+}
+
+function computeAreaEdgeVelocity(mx, my){
+  const edgeZoneX = Math.max(26, area.w * 0.12);
+  const edgeZoneY = Math.max(24, area.h * 0.14);
+  let vx = 0, vy = 0;
+
+  if (my <= area.y + edgeZoneY) {
+    const ratio = Math.min(1.6, Math.max(0.4, (area.y + edgeZoneY - my) / edgeZoneY));
+    vy = -0.022 * ratio;
+  } else if (my >= area.y + area.h - edgeZoneY) {
+    const ratio = Math.min(1.6, Math.max(0.4, (my - (area.y + area.h - edgeZoneY)) / edgeZoneY));
+    vy = +0.022 * ratio;
+  }
+
+  if (mx <= area.x + edgeZoneX) {
+    const ratio = Math.min(1.6, Math.max(0.4, (area.x + edgeZoneX - mx) / edgeZoneX));
+    vx = -0.022 * ratio;
+  } else if (mx >= area.x + area.w - edgeZoneX) {
+    const ratio = Math.min(1.6, Math.max(0.4, (mx - (area.x + area.w - edgeZoneX)) / edgeZoneX));
+    vx = +0.022 * ratio;
+  }
+
+  return { vx, vy };
+}
+
+function getDpadTargetPos(c){
+  if (CFG.steerTarget === 'buttons') {
+    return { cx: c.oyun.x, cy: c.oyun.y, x: c.oyun.x, y: c.oyun.y, fromCenter: false };
+  }
+  const joy = getJoyCtrl();
+  let dx = 0, dy = 0;
+  if (c.yon === 'L') dx = -1;
+  if (c.yon === 'R') dx = +1;
+  if (c.yon === 'U') dy = -1;
+  if (c.yon === 'D') dy = +1;
+  return {
+    cx: joy.oyun.x,
+    cy: joy.oyun.y,
+    x: joy.oyun.x + (dx * joy.menzil) / TV_ORAN,
+    y: joy.oyun.y + (dy * joy.menzil),
+    fromCenter: true
+  };
+}
+
+function onStart(e){
+  e.preventDefault();
+  const now = performance.now();
+
+  for (const t of e.changedTouches) {
+    const x = t.clientX, y = t.clientY;
+    if (inRect(x, y, vBarRect)) {
+      if (y < vBarRect.y + vBarRect.btnH) {
+        active.set(t.identifier, { kind: 'scroll_btn' });
+        triggerSmoothSwipe(0, +1);
+        info.textContent = 'SAYFA ▲';
+      } else if (y > vBarRect.y + vBarRect.h - vBarRect.btnH) {
+        active.set(t.identifier, { kind: 'scroll_btn' });
+        triggerSmoothSwipe(0, -1);
+        info.textContent = 'SAYFA ▼';
+      } else {
+        active.set(t.identifier, { kind: 'vscroll', sy: y, ly: y, started: false });
+        info.textContent = 'DIKEY CUBUK';
+      }
+      draw();
+      continue;
+    }
+    if (inRect(x, y, hBarRect)) {
+      if (x < hBarRect.x + hBarRect.btnW) {
+        active.set(t.identifier, { kind: 'scroll_btn' });
+        triggerSmoothSwipe(+1, 0);
+        info.textContent = 'SAYFA ◀';
+      } else if (x > hBarRect.x + hBarRect.w - hBarRect.btnW) {
+        active.set(t.identifier, { kind: 'scroll_btn' });
+        triggerSmoothSwipe(-1, 0);
+        info.textContent = 'SAYFA ▶';
+      } else {
+        active.set(t.identifier, { kind: 'hscroll', sx: x, lx: x, started: false });
+        info.textContent = 'YATAY CUBUK';
+      }
+      draw();
+      continue;
+    }
+  }
+
+  if (mode === 'imlec') {
+    let anyInArea = getAreaTouches(e.touches).length > 0;
+    if (!anyInArea) {
+      for (const t of e.touches) {
+        if (!active.has(t.identifier) && inRect(t.clientX, t.clientY, area)) {
+          anyInArea = true;
+          break;
+        }
+      }
+    }
+
+    for (const t of e.changedTouches) {
+      if (active.has(t.identifier)) continue;
+      const x = t.clientX, y = t.clientY;
+      if (!inRect(x, y, area) && !(anyInArea && e.touches.length >= 2)) continue;
+
+      const p = pid(t);
+      const state = {
+        kind: 'trackpad', p,
+        sx: x, sy: y, lx: x, ly: y,
+        t0: now, moved: false, dragging: false, holdTimer: null
+      };
+      active.set(t.identifier, state);
+    }
+
+    const areaTouches = getAreaTouches(e.touches);
+    if (areaTouches.length > maxTouchesInGesture) {
+      maxTouchesInGesture = areaTouches.length;
+    }
+
+    if (CFG.twoFinger && areaTouches.length >= 2) {
+      for (const a of active.values()) {
+        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+        if (a.dragging) { send(1, a.p, curX, curY); a.dragging = false; }
+      }
+      const t0 = areaTouches[0], t1 = areaTouches[1];
+      twoFingerPrev = {
+        x: (t0.clientX + t1.clientX) / 2,
+        y: (t0.clientY + t1.clientY) / 2,
+        sx: (t0.clientX + t1.clientX) / 2,
+        sy: (t0.clientY + t1.clientY) / 2,
+        moved: false
+      };
+      info.textContent = '2P KAYDIRMA HAZIR';
+      draw();
+      return;
+    }
+
+    if (areaTouches.length === 1 && maxTouchesInGesture === 1) {
+      const t0 = areaTouches[0];
+      const st = active.get(t0.identifier);
+      if (st && !st.holdTimer) {
+        st.holdTimer = setTimeout(() => {
+          if (maxTouchesInGesture === 1 && !st.moved && active.has(t0.identifier)) {
+            st.dragging = true;
+            send(0, st.p, curX, curY);
+            info.textContent = 'SURUKLE: ' + curX.toFixed(2) + ',' + curY.toFixed(2);
+            draw();
+          }
+        }, 420);
+      }
+      send(3, 0, curX, curY);
+      info.textContent = curX.toFixed(3) + ' , ' + curY.toFixed(3);
+    }
+    draw();
+    return;
+  }
+
+  for (const t of e.changedTouches) {
+    if (active.has(t.identifier)) continue;
+    const x = t.clientX, y = t.clientY;
+    if (mode === 'ayna') {
+      if (!inRect(x, y, area)) continue;
+      const nx = (x-area.x)/area.w, ny = (y-area.y)/area.h, p = pid(t);
+      active.set(t.identifier, {kind:'pad', p, nx, ny});
+      send(0,p,nx,ny);
+      info.textContent = nx.toFixed(3)+' , '+ny.toFixed(3);
+    } else if (mode === 'kumanda') {
+      if (editMode) {
+        const c = hitGamepadControl(x,y);
+        if (c) {
+          selectedCtrl = c;
+          active.set(t.identifier, {kind:'edit_btn', c, lx:x, ly:y});
+          send(3, 0, c.oyun.x, c.oyun.y);
+          info.textContent = c.ad + ' -> ' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2);
+        } else if (selectedCtrl) {
+          active.set(t.identifier, {kind:'edit_target', c:selectedCtrl, lx:x, ly:y});
+          send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
+        }
+      } else {
+        const c = hitGamepadControl(x,y);
+        const p = pid(t);
+        if (!c) {
+          if (CFG.showScreen && CFG.hybridTap && inRect(x, y, area)) {
+            const nx = (x - area.x) / area.w, ny = (y - area.y) / area.h;
+            active.set(t.identifier, {id: t.identifier, kind:'pad', p, nx, ny});
+            send(0, p, nx, ny);
+            info.textContent = 'DOKUN: ' + nx.toFixed(2) + ',' + ny.toFixed(2);
+          }
+          continue;
+        }
+        if (c.tip === 'cubuk' && CFG.leftStyle === 'wheel') {
+          const R = c.r * H;
+          const initSteer = Math.min(1, Math.max(-1, ((x - c.x * W) / R) * CFG.tiltSens));
+          wheelState.calibOffset = wheelState.rawAngle;
+          wheelState.active = true;
+          wheelState.touchControlled = (Math.abs(initSteer) > 0.08 || !wheelState.hasSensor);
+          wheelState.angle = wheelState.touchControlled ? initSteer : 0;
+
+          const st = {
+            id: t.identifier, kind: 'wheel_touch', c, p,
+            sx: x, sy: y,
+            nx: c.oyun.x + (wheelState.angle * c.menzil) / TV_ORAN,
+            ny: c.oyun.y,
+            heldSide: null, ramping: false, rampTimer: null
+          };
+          active.set(t.identifier, st);
+
+          if (CFG.steerTarget === 'analog') {
+            startSmoothAnalogHold(st, c.oyun.x, c.oyun.y, st.nx, st.ny);
+          } else {
+            updateWheelTouchTarget();
+          }
+          info.textContent = 'DIREKSIYON: ' + (wheelState.angle * 60).toFixed(0) + '°';
+        } else if (c.tip === 'cubuk') {
+          const R = c.r * H;
+          let dx = (x - c.x * W) / R;
+          let dy = (y - c.y * H) / R;
+          const len = Math.hypot(dx, dy);
+          if (len > 1) { dx /= len; dy /= len; }
+          const targetX = c.oyun.x + (dx * c.menzil) / TV_ORAN;
+          const targetY = c.oyun.y + (dy * c.menzil);
+
+          const st = {
+            id: t.identifier, kind: 'cubuk', c, p,
+            nx: targetX, ny: targetY, kx: dx, ky: dy,
+            ramping: false, rampTimer: null
+          };
+          active.set(t.identifier, st);
+          startSmoothAnalogHold(st, c.oyun.x, c.oyun.y, targetX, targetY);
+          info.textContent = 'JOYSTICK';
+        } else if (c.tip === 'yon_ok') {
+          const pos = getDpadTargetPos(c);
+          const st = {
+            id: t.identifier, kind: 'yon_ok', c, p,
+            nx: pos.x, ny: pos.y,
+            ramping: false, rampTimer: null
+          };
+          active.set(t.identifier, st);
+          if (pos.fromCenter) {
+            startSmoothAnalogHold(st, pos.cx, pos.cy, pos.x, pos.y);
+          } else {
+            send(0, p, pos.x, pos.y);
+          }
+          info.textContent = 'OK: ' + c.ad;
+        } else {
+          active.set(t.identifier, {id: t.identifier, kind:'dugme', c, p, nx:c.oyun.x, ny:c.oyun.y, ramping:false});
+          send(0,p,c.oyun.x,c.oyun.y);
+          info.textContent = c.ad + ' (' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2) + ')';
+        }
+      }
+    }
+  }
+  draw();
+}
+
+function onMove(e){
+  e.preventDefault();
+  const now = performance.now();
+
+  for (const t of e.changedTouches) {
+    const a = active.get(t.identifier);
+    if (!a) continue;
+    if (a.kind === 'vscroll') {
+      if (!a.started && Math.abs(t.clientY - a.sy) < 5) continue;
+      a.started = true;
+      const dy = t.clientY - a.ly;
+      a.ly = t.clientY;
+      const topLimit = vBarRect ? (vBarRect.y + vBarRect.btnH + 22) : 80;
+      const botLimit = vBarRect ? (vBarRect.y + vBarRect.h - vBarRect.btnH - 22) : (H - 80);
+      const trackH = Math.max(90, botLimit - topLimit);
+      feedScrollDelta(0, dy / trackH);
+
+      if (t.clientY <= topLimit) {
+        setEdgeAutoScroll(0, -0.024);
+        info.textContent = 'OTO KAYDIR ▲';
+      } else if (t.clientY >= botLimit) {
+        setEdgeAutoScroll(0, +0.024);
+        info.textContent = 'OTO KAYDIR ▼';
+      } else {
+        setEdgeAutoScroll(0, 0);
+        info.textContent = 'KAYDIR ⇅';
+      }
+      draw();
+    } else if (a.kind === 'hscroll') {
+      if (!a.started && Math.abs(t.clientX - a.sx) < 5) continue;
+      a.started = true;
+      const dx = t.clientX - a.lx;
+      a.lx = t.clientX;
+      const leftLimit = hBarRect ? (hBarRect.x + hBarRect.btnW + 24) : 80;
+      const rightLimit = hBarRect ? (hBarRect.x + hBarRect.w - hBarRect.btnW - 24) : (W - 80);
+      const trackW = Math.max(90, rightLimit - leftLimit);
+      feedScrollDelta(dx / trackW, 0);
+
+      if (t.clientX <= leftLimit) {
+        setEdgeAutoScroll(-0.024, 0);
+        info.textContent = 'OTO KAYDIR ◀';
+      } else if (t.clientX >= rightLimit) {
+        setEdgeAutoScroll(+0.024, 0);
+        info.textContent = 'OTO KAYDIR ▶';
+      } else {
+        setEdgeAutoScroll(0, 0);
+        info.textContent = 'KAYDIR ⇄';
+      }
+      draw();
+    }
+  }
+
+  if (mode === 'imlec') {
+    const areaTouches = getAreaTouches(e.touches);
+    if (areaTouches.length > maxTouchesInGesture) {
+      maxTouchesInGesture = areaTouches.length;
+    }
+
+    if (CFG.twoFinger && areaTouches.length >= 2) {
+      const t0 = areaTouches[0], t1 = areaTouches[1];
+      const mx = (t0.clientX + t1.clientX) / 2;
+      const my = (t0.clientY + t1.clientY) / 2;
+      if (!twoFingerPrev) {
+        twoFingerPrev = { x: mx, y: my, sx: mx, sy: my, moved: false };
+      }
+      const totalDist = Math.hypot(mx - twoFingerPrev.sx, my - twoFingerPrev.sy);
+      if (!twoFingerPrev.moved && totalDist < 6) return;
+      twoFingerPrev.moved = true;
+
+      const dx = mx - twoFingerPrev.x;
+      const dy = my - twoFingerPrev.y;
+      twoFingerPrev.x = mx;
+      twoFingerPrev.y = my;
+
+      feedScrollDelta(dx / area.w, dy / area.h);
+
+      const edge = computeAreaEdgeVelocity(mx, my);
+      setEdgeAutoScroll(edge.vx, edge.vy);
+      if (edge.vx !== 0 || edge.vy !== 0) {
+        info.textContent = 'SINIR OTO KAYDIR';
+      } else {
+        info.textContent = '2P KAYDIR ⇅⇄';
+      }
+      draw();
+      return;
+    }
+
+    if (maxTouchesInGesture >= 2 || now < multiTouchEndedAt + 140) return;
+
+    for (const t of e.changedTouches) {
+      const a = active.get(t.identifier);
+      if (!a || a.kind !== 'trackpad') continue;
+      const x = t.clientX, y = t.clientY;
+      if (!a.moved && (now - a.t0) < 35 && Math.hypot(x - a.sx, y - a.sy) < 10) continue;
+
+      const dx = x - a.lx, dy = y - a.ly;
+      a.lx = x; a.ly = y;
+      if (Math.hypot(x - a.sx, y - a.sy) > 7) {
+        a.moved = true;
+        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+      }
+      if (!a.moved) continue;
+
+      const sens = CFG.curSpeed;
+      curX = Math.min(1, Math.max(0, curX + (dx / area.w) * sens));
+      curY = Math.min(1, Math.max(0, curY + (dy / area.h) * sens));
+      if (a.dragging) {
+        send(2, a.p, curX, curY);
+      } else {
+        send(3, a.p, curX, curY);
+      }
+      info.textContent = curX.toFixed(3)+' , '+curY.toFixed(3);
+    }
+    draw();
+    return;
+  }
+
+  for (const t of e.changedTouches) {
+    const a = active.get(t.identifier); if (!a) continue;
+    const x = t.clientX, y = t.clientY;
+    if (a.kind === 'pad') {
+      a.nx = (x-area.x)/area.w; a.ny = (y-area.y)/area.h;
+      send(2,a.p,a.nx,a.ny);
+      info.textContent = Math.min(1,Math.max(0,a.nx)).toFixed(3)+' , '+Math.min(1,Math.max(0,a.ny)).toFixed(3);
+    } else if (a.kind === 'wheel_touch') {
+      const c = a.c, R = c.r * H;
+      if (Math.abs(x - a.sx) > 4 || !wheelState.hasSensor) {
+        wheelState.touchControlled = true;
+        wheelState.angle = Math.min(1, Math.max(-1, ((x - c.x * W) / R) * CFG.tiltSens));
+        updateWheelTouchTarget();
+      }
+    } else if (a.kind === 'cubuk') {
+      const c = a.c, R = c.r * H;
+      let dx = (x - c.x * W) / R;
+      let dy = (y - c.y * H) / R;
+      const len = Math.hypot(dx, dy);
+      if (len > 1) { dx /= len; dy /= len; }
+      a.kx = dx; a.ky = dy;
+      a.nx = c.oyun.x + (dx * c.menzil) / TV_ORAN;
+      a.ny = c.oyun.y + (dy * c.menzil);
+      if (!a.ramping) {
+        send(2, a.p, a.nx, a.ny);
+      }
+    } else if (a.kind === 'yon_ok') {
+      const hovered = getDpadCtrls().find(dc => Math.hypot(x - dc.x*W, y - dc.y*H) <= dc.r*H*1.15);
+      if (hovered && hovered !== a.c) {
+        const oldNx = a.nx, oldNy = a.ny;
+        a.c = hovered;
+        const pos = getDpadTargetPos(hovered);
+        a.nx = pos.x; a.ny = pos.y;
+        if (pos.fromCenter) {
+          send(2, a.p, pos.x, pos.y);
+        } else {
+          send(1, a.p, oldNx, oldNy);
+          send(0, a.p, pos.x, pos.y);
+        }
+        info.textContent = 'OK: ' + hovered.ad;
+      }
+    } else if (a.kind === 'edit_btn' || a.kind === 'edit_target') {
+      const c = a.c;
+      const dx = x - a.lx, dy = y - a.ly;
+      a.lx = x; a.ly = y;
+      c.oyun.x = Math.min(0.98, Math.max(0.02, c.oyun.x + (dx / area.w)));
+      c.oyun.y = Math.min(0.98, Math.max(0.02, c.oyun.y + (dy / area.h)));
+      saveControls();
+      send(3, 0, c.oyun.x, c.oyun.y);
+      info.textContent = c.ad + ' -> ' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2);
+    }
+  }
+  draw();
+}
+
+function onEnd(e){
+  e.preventDefault();
+  const now = performance.now();
+
+  for (const t of e.changedTouches) {
+    const a = active.get(t.identifier);
+    if (a && (a.kind === 'vscroll' || a.kind === 'hscroll' || a.kind === 'scroll_btn')) {
+      if (a.kind === 'vscroll' || a.kind === 'hscroll') {
+        finishScrollGesture();
+      }
+      active.delete(t.identifier);
+      idmap.delete(t.identifier);
+    }
+  }
+
+  if (mode === 'imlec') {
+    for (const t of e.changedTouches) {
+      const a = active.get(t.identifier);
+      if (a && a.kind === 'trackpad') {
+        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+        if (a.dragging) {
+          send(1, a.p, curX, curY);
+        } else if (
+          maxTouchesInGesture === 1 &&
+          (now > multiTouchEndedAt + 150) &&
+          !a.moved &&
+          (now - a.t0) < 270
+        ) {
+          const p = a.p;
+          const tx = curX, ty = curY;
+          send(0, p, tx, ty);
+          setTimeout(() => send(1, p, tx, ty), 40);
+          info.textContent = 'TIK: ' + tx.toFixed(2) + ',' + ty.toFixed(2);
+        }
+        active.delete(t.identifier);
+      }
+      idmap.delete(t.identifier);
+    }
+
+    const areaTouchesRemaining = getAreaTouches(e.touches);
+    if (maxTouchesInGesture >= 2 && areaTouchesRemaining.length < 2) {
+      finishScrollGesture();
+      twoFingerPrev = null;
+      multiTouchEndedAt = now;
+    }
+
+    if (areaTouchesRemaining.length === 0) {
+      maxTouchesInGesture = 0;
+      twoFingerPrev = null;
+    }
+    draw();
+    return;
+  }
+
+  for (const t of e.changedTouches) {
+    const a = active.get(t.identifier); if (!a) continue;
+    if (a.rampTimer) { clearInterval(a.rampTimer); a.rampTimer = null; }
+    if (a.kind === 'wheel_touch') {
+      wheelState.active = false;
+      wheelState.touchControlled = false;
+      wheelState.angle = 0;
+      if (CFG.steerTarget === 'analog' || a.heldSide) {
+        send(1, a.p, a.nx, a.ny);
+      }
+    } else if (a.kind === 'pad' || a.kind === 'cubuk' || a.kind === 'dugme' || a.kind === 'yon_ok') {
+      send(1, a.p, a.nx, a.ny);
+    }
+    active.delete(t.identifier);
+    idmap.delete(t.identifier);
+  }
+  draw();
+}
+
+cv.addEventListener('touchstart', onStart, {passive:false});
+cv.addEventListener('touchmove', onMove, {passive:false});
+cv.addEventListener('touchend', onEnd, {passive:false});
+cv.addEventListener('touchcancel', onEnd, {passive:false});
+
+minBarBtn.addEventListener('click', ()=>{
+  bar.classList.toggle('collapsed');
+  minBarBtn.textContent = bar.classList.contains('collapsed') ? '▼ Menü' : '▲';
+});
+
+modeBtn.addEventListener('click', ()=>{
+  finishScrollGesture();
+  const idx = (MODES.indexOf(mode) + 1) % MODES.length;
+  mode = MODES[idx];
+  try { localStorage.setItem('m2t_mode', mode); } catch(e) {}
+  info.textContent = '-';
+  computeLayout();
+  updateTopBar();
+  draw();
+});
+
+previewBtn.addEventListener('click', ()=>{
+  CFG.showScreen = !CFG.showScreen;
+  saveCfg();
+  computeLayout();
+  updateTopBar();
+  draw();
+});
+
+ctrlStyleBtn.addEventListener('click', ()=>{
+  const idx = (LEFT_STYLES.indexOf(CFG.leftStyle) + 1) % LEFT_STYLES.length;
+  CFG.leftStyle = LEFT_STYLES[idx];
+  saveCfg();
+  updateTopBar();
+  draw();
+});
+
+editBtn.addEventListener('click', ()=>{
+  editMode = !editMode;
+  const vis = getVisibleGamepadControls();
+  if (editMode) {
+    selectedCtrl = vis[0];
+    send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
+    info.textContent = selectedCtrl.ad + ' -> ' + selectedCtrl.oyun.x.toFixed(2) + ',' + selectedCtrl.oyun.y.toFixed(2);
+  } else {
+    info.textContent = 'Kaydedildi';
+  }
+  updateTopBar();
+  draw();
+});
+
+resetBtn.addEventListener('click', ()=>{
+  controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
+  saveControls();
+  selectedCtrl = getVisibleGamepadControls()[0];
+  info.textContent = 'Varsayilana donuldu';
+  draw();
+});
+
+document.getElementById('syncBtn').addEventListener('click', ()=>{
+  try { if (window.Android && Android.refreshFromGithub) Android.refreshFromGithub(); } catch(e) {}
+});
+
+/* ---------- Rehber (Beni Oku) Modal Mantigi ---------- */
+const guideModal = document.getElementById('guideModal');
+const chkHideGuide = document.getElementById('chkHideGuide');
+
+function openGuide(){
+  try { chkHideGuide.checked = (localStorage.getItem('m2t_hide_guide') === '1'); } catch(e) {}
+  guideModal.style.display = 'flex';
+  syncNativePreviewRect();
+}
+function closeGuide(){
+  try { localStorage.setItem('m2t_hide_guide', chkHideGuide.checked ? '1' : '0'); } catch(e) {}
+  guideModal.style.display = 'none';
+  syncNativePreviewRect();
+}
+
+document.getElementById('helpBtn').addEventListener('click', openGuide);
+document.getElementById('closeGuideTopBtn').addEventListener('click', closeGuide);
+document.getElementById('closeGuideBtn').addEventListener('click', closeGuide);
+
+try {
+  if (localStorage.getItem('m2t_hide_guide') !== '1') {
+    guideModal.style.display = 'flex';
+  }
+} catch(e) {}
+
+/* ---------- Ayarlar Modal Mantigi ---------- */
+const settingsModal = document.getElementById('settingsModal');
+const chkShowScreen = document.getElementById('chkShowScreen');
+const chkFullArea = document.getElementById('chkFullArea');
+const chkHybridTap = document.getElementById('chkHybridTap');
+const rngScreenDim = document.getElementById('rngScreenDim');
+const lblScreenDim = document.getElementById('lblScreenDim');
+const chkVBar = document.getElementById('chkVBar');
+const chkHBar = document.getElementById('chkHBar');
+const chkTwoFinger = document.getElementById('chkTwoFinger');
+const selScrollDir = document.getElementById('selScrollDir');
+const selLeftStyle = document.getElementById('selLeftStyle');
+const selSteerTarget = document.getElementById('selSteerTarget');
+const rngTiltSens = document.getElementById('rngTiltSens');
+const lblTiltSens = document.getElementById('lblTiltSens');
+const rngScrollSpeed = document.getElementById('rngScrollSpeed');
+const lblScrollSpeed = document.getElementById('lblScrollSpeed');
+const rngCurSpeed = document.getElementById('rngCurSpeed');
+const lblCurSpeed = document.getElementById('lblCurSpeed');
+const rngBarSize = document.getElementById('rngBarSize');
+
+function syncSettingsUI(){
+  chkShowScreen.checked = !!CFG.showScreen;
+  chkFullArea.checked = !!CFG.fullScreenArea;
+  chkHybridTap.checked = !!CFG.hybridTap;
+  rngScreenDim.value = CFG.screenDim ?? 0.20;
+  lblScreenDim.textContent = '%' + Math.round((CFG.screenDim ?? 0.20) * 100);
+  chkVBar.checked = !!CFG.vBar;
+  chkHBar.checked = !!CFG.hBar;
+  chkTwoFinger.checked = !!CFG.twoFinger;
+  selScrollDir.value = CFG.scrollDir || 'wheel';
+  selLeftStyle.value = CFG.leftStyle || 'joystick';
+  selSteerTarget.value = CFG.steerTarget || 'analog';
+  rngTiltSens.value = CFG.tiltSens || 1.5;
+  lblTiltSens.textContent = Number(CFG.tiltSens || 1.5).toFixed(1) + 'x';
+  rngScrollSpeed.value = CFG.scrollSpeed;
+  lblScrollSpeed.textContent = Number(CFG.scrollSpeed).toFixed(1) + 'x';
+  rngCurSpeed.value = CFG.curSpeed;
+  lblCurSpeed.textContent = Number(CFG.curSpeed).toFixed(1) + 'x';
+  rngBarSize.value = CFG.barSize;
+  document.getElementById('lblBarSize').textContent = CFG.barSize + 'px';
+}
+
+document.getElementById('setBtn').addEventListener('click', ()=>{
+  syncSettingsUI();
+  settingsModal.style.display = 'flex';
+  syncNativePreviewRect();
+});
+
+document.getElementById('closeSetBtn').addEventListener('click', ()=>{
+  CFG.showScreen = chkShowScreen.checked;
+  CFG.fullScreenArea = chkFullArea.checked;
+  CFG.hybridTap = chkHybridTap.checked;
+  CFG.screenDim = parseFloat(rngScreenDim.value);
+  CFG.vBar = chkVBar.checked;
+  CFG.hBar = chkHBar.checked;
+  CFG.twoFinger = chkTwoFinger.checked;
+  CFG.scrollDir = selScrollDir.value;
+  CFG.leftStyle = selLeftStyle.value;
+  CFG.steerTarget = selSteerTarget.value;
+  CFG.tiltSens = parseFloat(rngTiltSens.value);
+  CFG.scrollSpeed = parseFloat(rngScrollSpeed.value);
+  CFG.curSpeed = parseFloat(rngCurSpeed.value);
+  CFG.barSize = parseInt(rngBarSize.value, 10);
+  saveCfg();
+  settingsModal.style.display = 'none';
+  computeLayout();
+  updateTopBar();
+  draw();
+});
+
+rngScreenDim.addEventListener('input', ()=> lblScreenDim.textContent = '%' + Math.round(Number(rngScreenDim.value) * 100));
+rngTiltSens.addEventListener('input', ()=> lblTiltSens.textContent = Number(rngTiltSens.value).toFixed(1) + 'x');
+rngScrollSpeed.addEventListener('input', ()=> lblScrollSpeed.textContent = Number(rngScrollSpeed.value).toFixed(1) + 'x');
+rngCurSpeed.addEventListener('input', ()=> lblCurSpeed.textContent = Number(rngCurSpeed.value).toFixed(1) + 'x');
+rngBarSize.addEventListener('input', ()=> document.getElementById('lblBarSize').textContent = rngBarSize.value + 'px');
+
+/* ---------- Cizim ---------- */
+function drawScrollbars(){
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+
+  if (vBarRect) {
+    const r = vBarRect;
+    cx.fillStyle = 'rgba(20,27,45,0.92)';
+    cx.strokeStyle = scroller.down ? '#ff9f43' : '#2a3350';
+    cx.lineWidth = 1.5;
+    cx.beginPath();
+    cx.roundRect(r.x, r.y, r.w, r.h, 8);
+    cx.fill();
+    cx.stroke();
+
+    cx.strokeStyle = '#2a3350';
+    cx.beginPath();
+    cx.moveTo(r.x, r.y + r.btnH); cx.lineTo(r.x + r.w, r.y + r.btnH);
+    cx.moveTo(r.x, r.y + r.h - r.btnH); cx.lineTo(r.x + r.w, r.y + r.h - r.btnH);
+    cx.stroke();
+
+    cx.fillStyle = '#4da3ff';
+    cx.font = 'bold 16px system-ui';
+    cx.fillText('▲', r.x + r.w/2, r.y + r.btnH/2);
+    cx.fillText('▼', r.x + r.w/2, r.y + r.h - r.btnH/2);
+
+    const trackY = r.y + r.btnH + 16;
+    const trackH = Math.max(20, r.h - 2 * r.btnH - 32);
+    const ty = trackY + scroller.thumbV * trackH;
+    cx.fillStyle = scroller.down ? '#ff9f43' : '#2b3b66';
+    cx.beginPath();
+    cx.roundRect(r.x + 5, ty - 18, r.w - 10, 36, 7);
+    cx.fill();
+    cx.fillStyle = '#cfd8ff';
+    cx.font = '12px system-ui';
+    cx.fillText('⇅', r.x + r.w/2, ty);
+  }
+
+  if (hBarRect) {
+    const r = hBarRect;
+    cx.fillStyle = 'rgba(20,27,45,0.92)';
+    cx.strokeStyle = scroller.down ? '#ff9f43' : '#2a3350';
+    cx.lineWidth = 1.5;
+    cx.beginPath();
+    cx.roundRect(r.x, r.y, r.w, r.h, 8);
+    cx.fill();
+    cx.stroke();
+
+    cx.strokeStyle = '#2a3350';
+    cx.beginPath();
+    cx.moveTo(r.x + r.btnW, r.y); cx.lineTo(r.x + r.btnW, r.y + r.h);
+    cx.moveTo(r.x + r.w - r.btnW, r.y); cx.lineTo(r.x + r.w - r.btnW, r.y + r.h);
+    cx.stroke();
+
+    cx.fillStyle = '#4da3ff';
+    cx.font = 'bold 15px system-ui';
+    cx.fillText('◀', r.x + r.btnW/2, r.y + r.h/2);
+    cx.fillText('▶', r.x + r.w - r.btnW/2, r.y + r.h/2);
+
+    const trackX = r.x + r.btnW + 22;
+    const trackW = Math.max(20, r.w - 2 * r.btnW - 44);
+    const tx = trackX + scroller.thumbH * trackW;
+    cx.fillStyle = scroller.down ? '#ff9f43' : '#2b3b66';
+    cx.beginPath();
+    cx.roundRect(tx - 22, r.y + 5, 44, r.h - 10, 7);
+    cx.fill();
+    cx.fillStyle = '#cfd8ff';
+    cx.font = '12px system-ui';
+    cx.fillText('⇄', tx, r.y + r.h/2);
+  }
+}
+
+function drawSteeringWheel(c, isSel){
+  const px = c.x * W, py = c.y * H, R = c.r * H * 1.1;
+  cx.save();
+  cx.translate(px, py);
+  cx.rotate(wheelState.angle * (Math.PI / 2.6));
+
+  cx.lineWidth = 11;
+  cx.strokeStyle = isSel ? '#ff9f43' : (wheelState.active ? '#2ecc71' : 'rgba(58,76,122,0.85)');
+  cx.beginPath();
+  cx.arc(0, 0, R, 0, Math.PI * 2);
+  cx.stroke();
+
+  cx.lineWidth = 7;
+  cx.beginPath();
+  cx.moveTo(-R, 0); cx.lineTo(R, 0);
+  cx.moveTo(0, 0); cx.lineTo(0, R);
+  cx.stroke();
+
+  cx.fillStyle = '#ff9f43';
+  cx.beginPath();
+  cx.arc(0, -R, 7, 0, Math.PI * 2);
+  cx.fill();
+
+  cx.fillStyle = wheelState.active ? 'rgba(29,59,42,0.85)' : 'rgba(24,32,58,0.75)';
+  cx.beginPath();
+  cx.arc(0, 0, R * 0.36, 0, Math.PI * 2);
+  cx.fill();
+  cx.restore();
+
+  cx.fillStyle = wheelState.active ? '#2ecc71' : '#9ab0e6';
+  cx.font = 'bold 12px system-ui';
+  cx.fillText(wheelState.active ? 'DIREKSIYON AKTIF' : 'TUT & SAGA/SOLA CEVIR', px, py);
+  if (editMode) {
+    cx.fillStyle = '#ff9f43'; cx.font = '11px monospace';
+    cx.fillText(c.oyun.x.toFixed(2)+','+c.oyun.y.toFixed(2), px, py + R + 16);
+  }
+}
+
+function drawBackgroundWithCutout(){
+  if (!CFG.showScreen) {
+    cx.fillStyle = '#0b0e14';
+    cx.fillRect(0, 0, W, H);
+    return;
+  }
+  cx.clearRect(0, 0, W, H);
+  cx.fillStyle = '#0b0e14';
+  if (area.y > 0) cx.fillRect(0, 0, W, area.y);
+  if (area.y + area.h < H) cx.fillRect(0, area.y + area.h, W, H - (area.y + area.h));
+  if (area.x > 0) cx.fillRect(0, area.y, area.x, area.h);
+  if (area.x + area.w < W) cx.fillRect(area.x + area.w, area.y, W - (area.x + area.w), area.h);
+}
+
+function draw(){
+  drawBackgroundWithCutout();
+  cx.textAlign = 'center'; cx.textBaseline = 'middle';
+
+  if (mode === 'imlec') {
+    if (!CFG.showScreen) {
+      cx.fillStyle = '#0e131d';
+      cx.fillRect(area.x, area.y, area.w, area.h);
+    }
+    const isEdge = (scroller.edgeVX !== 0 || scroller.edgeVY !== 0);
+    cx.strokeStyle = isEdge ? '#2ecc71' : (scroller.down ? '#ff9f43' : 'rgba(77,163,255,0.45)');
+    cx.lineWidth = isEdge ? 3 : 2;
+    cx.setLineDash([8,6]);
+    cx.strokeRect(area.x + 1, area.y + 1, area.w - 2, area.h - 2);
+    cx.setLineDash([]);
+    if (!CFG.showScreen) {
+      cx.fillStyle = '#4da3ff'; cx.font = '15px system-ui';
+      cx.fillText('DOKUNMA ALANI (TAM EKRAN): 1 Parmak Imlec/Tik | 2 Parmak Kaydirma', area.x + area.w/2, area.y + area.h/2 - 14);
+      cx.fillStyle = '#5c6b9c'; cx.font = '13px system-ui';
+      cx.fillText('(Ustteki "📺 Ekran" butonuyla oyun/program goruntusunu telefonda acabilirsiniz)', area.x + area.w/2, area.y + area.h/2 + 14);
+    }
+    const px = area.x + curX * area.w, py = area.y + curY * area.h;
+    cx.strokeStyle = scroller.down ? '#ff9f43' : '#4da3ff'; cx.lineWidth = 2.5;
+    cx.beginPath(); cx.arc(px, py, 12, 0, Math.PI*2); cx.stroke();
+    cx.fillStyle = '#ffffff';
+    cx.beginPath(); cx.arc(px, py, 3, 0, Math.PI*2); cx.fill();
+    drawScrollbars();
+    return;
+  }
+
+  if (mode === 'ayna') {
+    if (!CFG.showScreen) {
+      cx.fillStyle = '#0e131d';
+      cx.fillRect(area.x, area.y, area.w, area.h);
+      cx.fillStyle = '#4da3ff'; cx.font = '15px system-ui';
+      cx.fillText('AYNA MODU (TAM EKRAN): Dokundugunuz yer dogrudan TV\'de tiklanir', area.x + area.w/2, area.y + area.h/2 - 12);
+      cx.fillStyle = '#7f94c7'; cx.font = '13.5px system-ui';
+      cx.fillText('Ust bardaki "📺 Ekran" butonuna basarak oyunu/programi burada canli gorebilirsiniz!', area.x + area.w/2, area.y + area.h/2 + 16);
+    }
+    cx.strokeStyle = 'rgba(77,163,255,0.40)'; cx.lineWidth = 1.5; cx.setLineDash([8,6]);
+    cx.strokeRect(area.x + 1, area.y + 1, area.w - 2, area.h - 2); cx.setLineDash([]);
+    drawScrollbars();
+    return;
+  }
+
+  // Mod: KUMANDA
+  if (CFG.showScreen && (CFG.screenDim ?? 0.20) > 0) {
+    cx.fillStyle = 'rgba(11,14,20,' + (CFG.screenDim ?? 0.20) + ')';
+    cx.fillRect(area.x, area.y, area.w, area.h);
+  }
+
+  if (editMode) {
+    cx.fillStyle = '#ff9f43'; cx.font = 'bold 13.5px system-ui';
+    cx.fillText('AYAR MODU: Bir tusa dokunun, ardindan parmaginizi kaydirarak hedefi oyundaki tusun uzerine getirin', W/2, 50);
+  }
+
+  const vis = getVisibleGamepadControls();
+  for (const c of vis) {
+    const px = c.x*W, py = c.y*H, R = c.r*H;
+    let st = null;
+    for (const a of active.values()) if (a.c === c) st = a;
+    const isSel = editMode && selectedCtrl === c;
+
+    if (editMode) {
+      const tx = area.x + c.oyun.x * area.w;
+      const ty = area.y + c.oyun.y * area.h;
+      cx.strokeStyle = isSel ? '#2ecc71' : 'rgba(255,159,67,0.7)';
+      cx.lineWidth = isSel ? 3 : 1.5;
+      cx.beginPath(); cx.arc(tx, ty, 16, 0, Math.PI*2); cx.stroke();
+      cx.fillStyle = isSel ? '#2ecc71' : '#ff9f43';
+      cx.font = 'bold 11px system-ui';
+      cx.fillText('🎯 ' + c.ad, tx, ty - 22);
+    }
+
+    if (c.tip === 'cubuk' && CFG.leftStyle === 'wheel' && !editMode) {
+      drawSteeringWheel(c, isSel);
+      continue;
+    }
+
+    if (c.tip === 'cubuk') {
+      cx.lineWidth = 1;
+      cx.strokeStyle = 'rgba(77,163,255,0.22)';
+      cx.beginPath(); cx.arc(px, py, R * 1.4, 0, Math.PI*2); cx.stroke();
+
+      cx.lineWidth = isSel ? 4 : 3;
+      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : 'rgba(77,163,255,0.55)');
+      cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.stroke();
+      const kx = (st && st.kx) ? st.kx : 0, ky = (st && st.ky) ? st.ky : 0;
+      cx.fillStyle = isSel ? '#ff9f43' : (st ? 'rgba(77,163,255,0.85)' : 'rgba(29,38,68,0.65)');
+      cx.beginPath(); cx.arc(px+kx*R, py+ky*R, R*0.40, 0, Math.PI*2); cx.fill();
+    } else if (c.tip === 'yon_ok') {
+      cx.lineWidth = isSel ? 4 : 3;
+      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : 'rgba(77,163,255,0.55)');
+      cx.fillStyle = isSel ? 'rgba(255,159,67,.32)' : (st ? 'rgba(77,163,255,.45)' : 'rgba(20,28,48,0.65)');
+      cx.beginPath();
+      cx.roundRect(px - R, py - R, R*2, R*2, 14);
+      cx.fill();
+      cx.stroke();
+      const arrowSym = {L:'◀', R:'▶', U:'▲', D:'▼'}[c.yon] || c.ad;
+      cx.fillStyle = '#cfd8ff'; cx.font = 'bold 24px system-ui';
+      cx.fillText(arrowSym, px, py);
+    } else {
+      cx.lineWidth = isSel ? 4 : 3;
+      cx.strokeStyle = isSel ? '#ff9f43' : (st ? '#4da3ff' : 'rgba(77,163,255,0.55)');
+      cx.fillStyle = isSel ? 'rgba(255,159,67,.28)' : (st ? 'rgba(77,163,255,.42)' : 'rgba(20,28,48,0.58)');
+      cx.beginPath(); cx.arc(px,py,R,0,Math.PI*2); cx.fill(); cx.stroke();
+      cx.fillStyle = '#cfd8ff'; cx.font = 'bold 20px system-ui';
+      cx.fillText(c.ad || '', px, py);
+    }
+    if (editMode) {
+      cx.fillStyle = '#ff9f43'; cx.font = '11px monospace';
+      cx.fillText(c.ad + ':' + c.oyun.x.toFixed(2)+','+c.oyun.y.toFixed(2), px, py + R + 14);
+    }
+  }
+}
+
+/* ---------- Ikonlu Uygulama Secici + Geri ---------- */
+const panel = document.getElementById('panel'), applist = document.getElementById('applist');
+const q = document.getElementById('q');
+let APPS = null;
+const jsIconCache = new Map();
+
+const PALETTE = [
+  ['#2563eb','#1d4ed8'], ['#e11d48','#be123c'], ['#059669','#047857'],
+  ['#d97706','#b45309'], ['#7c3aed','#6d28d9'], ['#0891b2','#0e7490'],
+  ['#db2777','#be185d'], ['#4f46e5','#4338ca'], ['#ea580c','#c2410c']
+];
+
+function buildFallbackIconSvg(name, comp){
+  const key = (name + ' ' + comp).toLowerCase();
+  let sym = '';
+  let c1 = null, c2 = null;
+
+  if (key.includes('chrome') || key.includes('browser') || key.includes('opera') || key.includes('firefox')) {
+    sym = '🌐'; c1 = '#2563eb'; c2 = '#1e40af';
+  } else if (key.includes('youtube')) {
+    sym = '▶️'; c1 = '#dc2626'; c2 = '#991b1b';
+  } else if (key.includes('asphalt') || key.includes('rac') || key.includes('car') || key.includes('drift') || key.includes('needfor')) {
+    sym = '🏎️'; c1 = '#ea580c'; c2 = '#9a3412';
+  } else if (key.includes('game') || key.includes('pubg') || key.includes('brawl') || key.includes('clash') || key.includes('roblox') || key.includes('minecraft') || key.includes('pes') || key.includes('fifa')) {
+    sym = '🎮'; c1 = '#7c3aed'; c2 = '#4c1d95';
+  } else if (key.includes('netflix') || key.includes('tv') || key.includes('video') || key.includes('vlc') || key.includes('kodi') || key.includes('film')) {
+    sym = '🎬'; c1 = '#e11d48'; c2 = '#881337';
+  } else if (key.includes('spotify') || key.includes('music') || key.includes('muzik') || key.includes('audio')) {
+    sym = '🎵'; c1 = '#059669'; c2 = '#065f46';
+  } else if (key.includes('whatsapp') || key.includes('telegram') || key.includes('mesaj') || key.includes('chat')) {
+    sym = '💬'; c1 = '#10b981'; c2 = '#047857';
+  } else if (key.includes('shizuku')) {
+    sym = '⚡'; c1 = '#3b82f6'; c2 = '#1d4ed8';
+  } else if (key.includes('ayar') || key.includes('setting')) {
+    sym = '⚙️'; c1 = '#475569'; c2 = '#1e293b';
+  } else if (key.includes('kamera') || key.includes('camera')) {
+    sym = '📷'; c1 = '#0284c7'; c2 = '#0369a1';
+  } else if (key.includes('galeri') || key.includes('photo') || key.includes('resim')) {
+    sym = '🖼️'; c1 = '#db2777'; c2 = '#9d174d';
+  } else if (key.includes('harita') || key.includes('map')) {
+    sym = '🗺️'; c1 = '#16a34a'; c2 = '#15803d';
+  } else if (key.includes('dosya') || key.includes('file')) {
+    sym = '📁'; c1 = '#d97706'; c2 = '#92400e';
+  } else if (key.includes('vending') || key.includes('play') || key.includes('market') || key.includes('store')) {
+    sym = '🛍️'; c1 = '#0891b2'; c2 = '#155e75';
+  } else {
+    let h = 0;
+    for (let i = 0; i < comp.length; i++) h = ((h << 5) - h + comp.charCodeAt(i)) | 0;
+    const pair = PALETTE[Math.abs(h) % PALETTE.length];
+    c1 = pair[0]; c2 = pair[1];
+    const clean = (name || '?').trim().replace(/[^A-Za-z0-9ÇĞİÖŞÜçğıöşü ]/g, '').trim();
+    const parts = clean.split(/\s+/).filter(Boolean);
+    sym = (parts.length >= 2 ? (parts[0][0] + parts[1][0]) : clean.slice(0, 2)).toUpperCase() || '📱';
+  }
+
+  const isEmoji = sym.length > 2 || /[^\u0000-\u00ff]/.test(sym) && !/^[A-Za-z0-9ÇĞİÖŞÜçğıöşü]{1,2}$/.test(sym);
+  const fSize = isEmoji ? 44 : 34;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="${c1}"/><stop offset="100%" stop-color="${c2}"/>
+    </linearGradient></defs>
+    <rect width="96" height="96" rx="22" fill="url(#g)"/>
+    <text x="48" y="52" text-anchor="middle" dominant-baseline="central" fill="#ffffff"
+      font-family="system-ui,sans-serif" font-weight="700" font-size="${fSize}">${sym}</text>
+  </svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
+function resolveAppIcon(app, imgEl){
+  if (jsIconCache.has(app.c)) {
+    imgEl.src = jsIconCache.get(app.c);
+    return;
+  }
+  const fallback = buildFallbackIconSvg(app.n, app.c);
+  imgEl.src = fallback;
+  if (window.Android && typeof Android.appIcon === 'function') {
+    setTimeout(() => {
+      try {
+        const realIcon = Android.appIcon(app.c);
+        if (realIcon && realIcon.startsWith('data:image/')) {
+          jsIconCache.set(app.c, realIcon);
+          imgEl.src = realIcon;
+        } else {
+          jsIconCache.set(app.c, fallback);
+        }
+      } catch(e) {
+        jsIconCache.set(app.c, fallback);
+      }
+    }, 5);
+  } else {
+    jsIconCache.set(app.c, fallback);
+  }
+}
+
+function loadApps(){
+  if (APPS) return APPS;
+  try { APPS = JSON.parse((window.Android && Android.apps) ? Android.apps() : '[]'); } catch(e) { APPS = []; }
+  return APPS;
+}
+function getRecent(){ try { return JSON.parse(localStorage.getItem('m2t_recent') || '[]'); } catch(e) { return []; } }
+function pushRecent(c){
+  try { localStorage.setItem('m2t_recent', JSON.stringify([c, ...getRecent().filter(x => x !== c)].slice(0,8))); } catch(e) {}
+}
+
+function renderApps(){
+  const f = q.value.trim().toLowerCase(), rec = getRecent();
+  const items = loadApps().filter(a => !f || a.n.toLowerCase().includes(f) || a.c.toLowerCase().includes(f));
+  if (!f) items.sort((a,b) => {
+    const ra = rec.indexOf(a.c), rb = rec.indexOf(b.c);
+    if (ra >= 0 || rb >= 0) { if (ra < 0) return 1; if (rb < 0) return -1; return ra - rb; }
+    return a.n.localeCompare(b.n, 'tr');
+  });
+  applist.textContent = '';
+  for (const a of items) {
+    const isRec = rec.includes(a.c);
+    const b = document.createElement('button');
+    b.className = 'app-item' + (isRec ? ' recent' : '');
+
+    const img = document.createElement('img');
+    img.className = 'app-icon';
+    img.alt = a.n;
+    resolveAppIcon(a, img);
+
+    const meta = document.createElement('div');
+    meta.className = 'app-meta';
+
+    const title = document.createElement('div');
+    title.className = 'app-name';
+    title.textContent = a.n;
+    meta.appendChild(title);
+
+    if (isRec) {
+      const badge = document.createElement('div');
+      badge.className = 'app-rec-badge';
+      badge.textContent = '★ Son Kullanilan';
+      meta.appendChild(badge);
+    } else {
+      const pkg = document.createElement('div');
+      pkg.className = 'app-pkg';
+      pkg.textContent = a.c.split('/')[0];
+      meta.appendChild(pkg);
+    }
+
+    b.appendChild(img);
+    b.appendChild(meta);
+
+    b.addEventListener('click', () => {
+      pushRecent(a.c);
+      try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
+      try { Android.launch(a.c); } catch(e) {}
+      panel.style.display = 'none';
+      syncNativePreviewRect();
+    });
+    applist.appendChild(b);
+  }
+}
+
+q.addEventListener('focus', () => {
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(true); } catch(e) {}
+});
+q.addEventListener('blur', () => {
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
+});
+document.getElementById('appBtn').addEventListener('click', () => {
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(true); } catch(e) {}
+  q.value = ''; renderApps(); panel.style.display = 'flex';
+  syncNativePreviewRect();
+});
+document.getElementById('closeBtn').addEventListener('click', () => {
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
+  panel.style.display = 'none';
+  syncNativePreviewRect();
+});
+q.addEventListener('input', renderApps);
+document.getElementById('backBtn').addEventListener('click', () => { try { Android.back(); } catch(e) {} });
+
+resize();
+</script>
+</body>
+</html>
