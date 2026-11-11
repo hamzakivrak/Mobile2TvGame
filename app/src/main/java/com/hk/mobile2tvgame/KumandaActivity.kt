@@ -113,6 +113,15 @@ class KumandaActivity : Activity(), SensorEventListener {
         private var streamProc: Process? = null
 
         @Volatile
+        private var tvConnected: Boolean = false
+
+        @Volatile
+        private var lastDisplaySpec: String = "1920x1080/360"
+
+        @Volatile
+        private var lastScrcpyVer: String = "5.0.1"
+
+        @Volatile
         private var streamStatusText: String = "Hazir."
 
         private val logLines = ArrayDeque<String>(60)
@@ -243,6 +252,7 @@ class KumandaActivity : Activity(), SensorEventListener {
                 .put("running", running)
                 .put("granted", granted)
                 .put("streaming", streaming)
+                .put("tvConnected", streaming && tvConnected)
                 .put("status", streamStatusText)
                 .put("logs", getLogsString())
                 .toString()
@@ -281,13 +291,16 @@ class KumandaActivity : Activity(), SensorEventListener {
                     return "no_perm"
                 }
                 if (streamProc != null) {
-                    streamStatusText = "Yayin zaten calisiyor."
+                    streamStatusText = if (tvConnected) "TV Bagli (Yayin Aktif)" else "TV Bekleniyor... (TV'de uygulamayi acin)"
                     pushStateToWeb()
                     return "already_running"
                 }
                 val apk = applicationInfo.sourceDir
                 val v = version.trim().ifEmpty { "5.0.1" }
                 val d = display.trim().ifEmpty { "1920x1080/360" }
+                lastDisplaySpec = d
+                lastScrcpyVer = v
+
                 val a0 = appPkg.trim()
                 val a = if (a0.isEmpty() || a0.contains('/')) a0 else (
                         try {
@@ -297,6 +310,7 @@ class KumandaActivity : Activity(), SensorEventListener {
                         } ?: a0)
 
                 clearLogs()
+                tvConnected = false
                 streamStatusText = "Yayin baslatildi, TV bekleniyor..."
                 appendLog("Sanal ekran: $d | Uygulama: ${a.ifEmpty { "(yok)" }}")
                 pushStateToWeb()
@@ -308,26 +322,36 @@ class KumandaActivity : Activity(), SensorEventListener {
                             Array<String>::class.java, Array<String>::class.java, String::class.java
                         )
                         m.isAccessible = true
-                        val sh = "export CLASSPATH='$apk'; exec /system/bin/app_process / " +
+                        // Onceki oturumdan kalan zombi RelayMain / scrcpy sureclerini temizle:
+                        val sh = "pkill -f com.hk.mobile2tvgame.RelayMain >/dev/null 2>&1; " +
+                                "pkill -f com.genymobile.scrcpy.Server >/dev/null 2>&1; " +
+                                "sleep 0.2; " +
+                                "export CLASSPATH='$apk'; exec /system/bin/app_process / " +
                                 "com.hk.mobile2tvgame.RelayMain '$apk' '$v' '$a' '$d' 27183 2>&1"
                         val p = m.invoke(null, arrayOf("sh", "-c", sh), null, null) as Process
                         streamProc = p
                         pushStateToWeb()
                         p.inputStream.bufferedReader().forEachLine { line ->
                             appendLog(line)
-                            if (line.contains("TV baglandi")) {
+                            if (line.contains("TV baglandi") || line.contains("Sanal ekran hazir") || line.contains("[akis] video boyutu")) {
+                                tvConnected = true
                                 streamStatusText = "TV Baglandi (Yayin Aktif)"
                             } else if (line.contains("TV bekleniyor")) {
+                                tvConnected = false
                                 streamStatusText = "TV Bekleniyor... (TV'de uygulamayi acin)"
+                            } else if (line.contains("[beklemede]")) {
+                                streamStatusText = "TV Bekleniyor (Baglaninca uygulama TV'de acilacak)"
                             }
                             pushStateToWeb()
                         }
                         appendLog("(Yayin sureci sonlandi)")
+                        tvConnected = false
                         streamStatusText = "Yayin durdu."
                         streamProc = null
                         pushStateToWeb()
                     } catch (e: Throwable) {
                         appendLog("HATA: $e")
+                        tvConnected = false
                         streamStatusText = "Hata: ${e.message}"
                         streamProc = null
                         pushStateToWeb()
@@ -345,6 +369,23 @@ class KumandaActivity : Activity(), SensorEventListener {
         fun stopStream() {
             try { streamProc?.destroy() } catch (_: Throwable) {}
             streamProc = null
+            tvConnected = false
+            thread(isDaemon = true) {
+                try {
+                    val m = Shizuku::class.java.getDeclaredMethod(
+                        "newProcess",
+                        Array<String>::class.java, Array<String>::class.java, String::class.java
+                    )
+                    m.isAccessible = true
+                    val p = m.invoke(
+                        null,
+                        arrayOf("sh", "-c", "pkill -f com.hk.mobile2tvgame.RelayMain >/dev/null 2>&1; pkill -f com.genymobile.scrcpy.Server >/dev/null 2>&1"),
+                        null,
+                        null
+                    ) as Process
+                    p.waitFor()
+                } catch (_: Throwable) {}
+            }
             streamStatusText = "Yayin durduruldu."
             appendLog("Kullanici tarafindan durduruldu.")
             pushStateToWeb()
@@ -403,7 +444,17 @@ class KumandaActivity : Activity(), SensorEventListener {
 
         @JavascriptInterface
         fun launch(comp: String) {
-            if (comp.matches(Regex("[A-Za-z0-9_.\$/]+"))) queue.offer("A $comp\n")
+            if (!comp.matches(Regex("[A-Za-z0-9_.\$/]+"))) return
+            // Eger yayin henuz baslatilmadiysa otomatik olarak bu uygulamayla yayini baslat
+            if (streamProc == null) {
+                val running = try { Shizuku.pingBinder() } catch (_: Throwable) { false }
+                val granted = running && try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch (_: Throwable) { false }
+                if (granted) {
+                    startStream(lastDisplaySpec, comp, lastScrcpyVer)
+                    return
+                }
+            }
+            queue.offer("A $comp\n")
         }
 
         @JavascriptInterface

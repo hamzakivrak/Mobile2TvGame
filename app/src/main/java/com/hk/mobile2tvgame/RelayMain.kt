@@ -15,6 +15,7 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.zip.ZipFile
@@ -28,15 +29,25 @@ object RelayMain {
     private const val CURSOR_PORT = 27186
     private const val AUDIO_PORT = 27187
     private const val LOCAL_VIDEO_PORT = 27188
+    private const val TMP_JAR_PATH = "/data/local/tmp/m2t-scrcpy-server.jar"
 
     @Volatile
     private var displayId = -1
+
+    @Volatile
+    private var pendingLaunchTarget: String? = null
+
+    private val launchedOnVirtualDisplay = ConcurrentHashMap.newKeySet<String>()
+    private val launchLock = Any()
 
     @Volatile
     private var serverProc: Process? = null
 
     @Volatile
     private var beacon = true
+
+    @Volatile
+    private var allowedTvIp: String? = null
 
     @Volatile
     private var ctlOut: OutputStream? = null
@@ -59,7 +70,6 @@ object RelayMain {
     private var audOut: OutputStream? = null
     private val audLock = Any()
 
-    // Telefonda canli ekran onizlemesi (KumandaActivity SurfaceView) icin yerel video akisi
     @Volatile
     private var previewActive = false
     private val previewQueue = LinkedBlockingQueue<ByteArray>(24)
@@ -100,6 +110,11 @@ object RelayMain {
                 ss.bind(InetSocketAddress(CURSOR_PORT))
                 while (true) {
                     val c = ss.accept()
+                    val tvIp = allowedTvIp
+                    if (tvIp != null && c.inetAddress.hostAddress != tvIp) {
+                        try { c.close() } catch (_: Exception) {}
+                        continue
+                    }
                     c.tcpNoDelay = true
                     curOut = BufferedOutputStream(c.getOutputStream(), 4096)
                 }
@@ -117,6 +132,11 @@ object RelayMain {
                 ss.bind(InetSocketAddress(AUDIO_PORT))
                 while (true) {
                     val c = ss.accept()
+                    val tvIp = allowedTvIp
+                    if (tvIp != null && c.inetAddress.hostAddress != tvIp) {
+                        try { c.close() } catch (_: Exception) {}
+                        continue
+                    }
                     c.tcpNoDelay = true
                     synchronized(audLock) {
                         audOut = BufferedOutputStream(c.getOutputStream(), 16384)
@@ -132,7 +152,9 @@ object RelayMain {
     private fun startLocalVideoServer() {
         thread(isDaemon = true) {
             try {
-                val ss = ServerSocket(LOCAL_VIDEO_PORT, 2, InetAddress.getByName("127.0.0.1"))
+                val ss = ServerSocket()
+                ss.reuseAddress = true
+                ss.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), LOCAL_VIDEO_PORT), 2)
                 while (true) {
                     val c = ss.accept()
                     thread(isDaemon = true) {
@@ -223,27 +245,141 @@ object RelayMain {
         return t
     }
 
+    private fun detectScrcpyDisplayIdFallback(): Int {
+        return try {
+            val out = runCmd("/system/bin/dumpsys", "display")
+            // scrcpy sanal ekranini bul (uniqueId veya ownerPackageName shell / scrcpy)
+            val m = Regex("Display Id=(\\d+)[^\\n]*scrcpy", RegexOption.IGNORE_CASE).find(out)
+                ?: Regex("mDisplayId=(\\d+)[\\s\\S]{0,300}?scrcpy", RegexOption.IGNORE_CASE).find(out)
+            val id = m?.groupValues?.get(1)?.toIntOrNull() ?: -1
+            if (id > 0) id else -1
+        } catch (_: Exception) {
+            -1
+        }
+    }
+
     private fun launchApp(target: String) {
-        var comp = target
-        if (!comp.contains('/')) {
-            try {
-                val r = runCmd(
-                    "/system/bin/cmd", "package", "resolve-activity", "--brief",
-                    "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", target
-                )
-                val last = r.lines().map { it.trim() }.lastOrNull { it.contains('/') && !it.contains(' ') }
-                if (last != null) comp = last
-            } catch (e: Exception) {
-                p("cozum hatasi: $e")
+        val cleanTarget = target.trim()
+        if (cleanTarget.isEmpty()) return
+
+        // Eger TV henuz baglanmadiysa veya sanal ekran olusmadiysa ASLA --display -1 ile calistirma!
+        // (--display -1 Android'de uygulamayi telefonun kendi ekraninda acar ve kumandadan atar!)
+        if (displayId <= 0) {
+            // Eger sunucu sureci basladiysa kisa bir sure (3 sn) displayId'nin gelmesini bekle
+            if (serverProc != null) {
+                val waitEnd = System.currentTimeMillis() + 3_000
+                while (displayId <= 0 && System.currentTimeMillis() < waitEnd) {
+                    Thread.sleep(80)
+                }
+                if (displayId <= 0) {
+                    val detected = detectScrcpyDisplayIdFallback()
+                    if (detected > 0) displayId = detected
+                }
+            }
+            if (displayId <= 0) {
+                pendingLaunchTarget = cleanTarget
+                p("[beklemede] TV sanal ekrani henuz hazir degil. '$cleanTarget' siraya alindi (TV baglaninca otomatik TV'de acilacak).")
+                return
             }
         }
-        p("Baslatilan bilesen: $comp")
-        val cmd = mutableListOf(
-            "/system/bin/am", "start", "--display", displayId.toString(),
-            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"
-        )
-        if (comp.contains('/')) { cmd.add("-n"); cmd.add(comp) } else { cmd.add("-p"); cmd.add(comp) }
-        runCmd(*cmd.toTypedArray()).lines().filter { it.isNotBlank() }.forEach { p("[am] $it") }
+
+        synchronized(launchLock) {
+            val targetDisp = displayId
+            if (targetDisp <= 0) {
+                pendingLaunchTarget = cleanTarget
+                return
+            }
+
+            var comp = cleanTarget
+            if (!comp.contains('/')) {
+                try {
+                    val r = runCmd(
+                        "/system/bin/cmd", "package", "resolve-activity", "--brief",
+                        "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", cleanTarget
+                    )
+                    val last = r.lines().map { it.trim() }.lastOrNull { it.contains('/') && !it.contains(' ') }
+                    if (last != null) comp = last
+                } catch (e: Exception) {
+                    p("cozum hatasi: $e")
+                }
+            }
+
+            val pkg = comp.substringBefore('/').trim()
+            val firstLaunchOnTv = pkg.isNotEmpty() && !launchedOnVirtualDisplay.contains(pkg)
+
+            p("Uygulama TV sanal ekraninda (id=$targetDisp) baslatiliyor: $comp")
+
+            // Eger bu uygulama daha once telefonda (Display 0) acildiysa, Android onun Task'ini Display 0'da tutar.
+            // Ilk kez TV sanal ekranina tasirken --activity-clear-task kullanarak Display 0'daki Task'i kapatip
+            // sanal ekranda (targetDisp) yeni Task olusturmasi zorlanir.
+            val cmd = mutableListOf(
+                "/system/bin/am", "start",
+                "--display", targetDisp.toString(),
+                "--windowingMode", "1",
+                "--activity-new-task"
+            )
+            if (firstLaunchOnTv) {
+                cmd.add("--activity-clear-task")
+            }
+            cmd.addAll(listOf("-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"))
+            if (comp.contains('/')) {
+                cmd.add("-n")
+                cmd.add(comp)
+            } else {
+                cmd.add("-p")
+                cmd.add(comp)
+            }
+
+            val out = runCmd(*cmd.toTypedArray())
+            out.lines().filter { it.isNotBlank() }.forEach { p("[am] $it") }
+
+            // Eger Android "current task has been brought to the front" veya "delivered to currently running"
+            // dediyse ve uygulama baska bir ekranda (orn. Display 0) kalmissa --activity-clear-task ile zorla:
+            if (!firstLaunchOnTv && (out.contains("brought to the front", ignoreCase = true) ||
+                        out.contains("currently running", ignoreCase = true))) {
+                // KumandaActivity'nin telefon ekraninda (Display 0) en ustte kalmasini garantiye al
+                try {
+                    runCmd(
+                        "/system/bin/am", "start", "--display", "0",
+                        "--activity-single-top", "--activity-reorder-to-front",
+                        "-n", "com.hk.mobile2tvgame/.KumandaActivity"
+                    )
+                } catch (_: Exception) {}
+            }
+
+            if (pkg.isNotEmpty()) {
+                launchedOnVirtualDisplay.add(pkg)
+            }
+
+            // Telefon ekraninda (Display 0) her ihtimale karsi KumandaActivity'yi onde tut
+            try {
+                runCmd(
+                    "/system/bin/am", "start", "--display", "0",
+                    "--activity-single-top", "--activity-reorder-to-front",
+                    "-n", "com.hk.mobile2tvgame/.KumandaActivity"
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun onVirtualDisplayReady(newId: Int) {
+        if (newId <= 0) return
+        val wasUnset = displayId <= 0
+        displayId = newId
+        if (wasUnset) {
+            p("Sanal ekran hazir: id=$newId")
+            val target = pendingLaunchTarget
+            if (!target.isNullOrBlank()) {
+                pendingLaunchTarget = null
+                thread(isDaemon = true) {
+                    try {
+                        launchApp(target)
+                    } catch (e: Exception) {
+                        p("am hatasi: $e")
+                    }
+                }
+            }
+        }
     }
 
     private fun sendTouch(action: Int, id: Int, nx: Double, ny: Double) {
@@ -281,7 +417,9 @@ object RelayMain {
     private fun startLocalControl() {
         thread(isDaemon = true) {
             try {
-                val ss = ServerSocket(LOCAL_CTL_PORT, 4, InetAddress.getByName("127.0.0.1"))
+                val ss = ServerSocket()
+                ss.reuseAddress = true
+                ss.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), LOCAL_CTL_PORT), 4)
                 while (true) {
                     val c = ss.accept()
                     thread(isDaemon = true) {
@@ -375,15 +513,19 @@ object RelayMain {
     fun main(args: Array<String>) {
         Runtime.getRuntime().addShutdownHook(Thread {
             try { serverProc?.destroy() } catch (_: Throwable) {}
+            try { File(TMP_JAR_PATH).delete() } catch (_: Throwable) {}
         })
         var sock: LocalSocket? = null
         var audSock: LocalSocket? = null
         try {
             val apk = args[0]
             val version = args[1]
-            val startApp = args[2]
+            val startApp = args[2].trim()
             val display = args[3]
             val port = args[4].toInt()
+            if (startApp.isNotEmpty()) {
+                pendingLaunchTarget = startApp
+            }
             Regex("(\\d+)x(\\d+)").find(display)?.let {
                 vw = it.groupValues[1].toInt()
                 vh = it.groupValues[2].toInt()
@@ -400,25 +542,25 @@ object RelayMain {
             p("TV bekleniyor (port $port)... TV uygulamasini acin.")
             val tv = ss.accept()
             beacon = false
+            allowedTvIp = tv.inetAddress.hostAddress
+            try { ss.close() } catch (_: Exception) {}
             tv.tcpNoDelay = true
             tv.sendBufferSize = 256 * 1024
             p("TV baglandi: ${tv.inetAddress.hostAddress}")
             val out = BufferedOutputStream(tv.getOutputStream(), 65536)
 
-            val dst = "/data/local/tmp/m2t-scrcpy-server.jar"
+            val dst = TMP_JAR_PATH
             ZipFile(apk).use { z ->
                 val e = z.getEntry("assets/scrcpy-server.jar")
                     ?: throw IOException("apk icinde assets/scrcpy-server.jar yok")
                 z.getInputStream(e).use { i -> File(dst).outputStream().use { o -> i.copyTo(o) } }
             }
 
-            // Giris/orta seviye islemciler (orn. Snapdragon 680 - Redmi Pad SE) icin
-            // cozunurluge gore bitrate ve FPS'i otomatik optimize et:
             val maxDim = maxOf(vw, vh)
             val bitRate = when {
-                maxDim <= 1366 -> 4_000_000   // 720p: 4 Mbps (Snapdragon 680 ve 2.4GHz Wi-Fi icin cok akici)
-                maxDim <= 1680 -> 6_500_000   // 900p: 6.5 Mbps
-                else -> 10_000_000            // 1080p: 10 Mbps
+                maxDim <= 1366 -> 4_000_000
+                maxDim <= 1680 -> 6_500_000
+                else -> 10_000_000
             }
             val maxFps = when {
                 maxDim <= 1366 -> 45
@@ -449,7 +591,12 @@ object RelayMain {
                     proc.inputStream.bufferedReader().forEachLine {
                         p("[sunucu] $it")
                         val m = Regex("New display:.*\\(id=(\\d+)\\)").find(it)
-                        if (m != null) displayId = m.groupValues[1].toInt()
+                        if (m != null) {
+                            val parsedId = m.groupValues[1].toIntOrNull() ?: -1
+                            if (parsedId > 0) {
+                                onVirtualDisplayReady(parsedId)
+                            }
+                        }
                     }
                 } catch (_: Exception) {
                 }
@@ -518,19 +665,15 @@ object RelayMain {
                 p("Kontrol kanali hazir.")
             }
 
-            if (startApp.isNotBlank()) {
-                thread(isDaemon = true) {
-                    val waitEnd = System.currentTimeMillis() + 10_000
-                    while (displayId < 0 && System.currentTimeMillis() < waitEnd) Thread.sleep(100)
-                    if (displayId < 0) {
-                        p("UYARI: sanal ekran numarasi bulunamadi")
-                        return@thread
-                    }
-                    p("Uygulama sanal ekranda aciliyor: $startApp (ekran $displayId)")
-                    try {
-                        launchApp(startApp)
-                    } catch (e: Exception) {
-                        p("am hatasi: $e")
+            // Yedek kontrol: eger log satiri geciktiyse veya farkli formatta ciktiysa dumpsys ile bul
+            thread(isDaemon = true) {
+                val waitEnd = System.currentTimeMillis() + 8_000
+                while (displayId <= 0 && System.currentTimeMillis() < waitEnd) {
+                    Thread.sleep(150)
+                    val fb = detectScrcpyDisplayIdFallback()
+                    if (fb > 0) {
+                        onVirtualDisplayReady(fb)
+                        break
                     }
                 }
             }
@@ -618,6 +761,7 @@ object RelayMain {
             try { sock?.close() } catch (_: Exception) {}
             try { audSock?.close() } catch (_: Exception) {}
             try { serverProc?.destroy() } catch (_: Exception) {}
+            try { File(TMP_JAR_PATH).delete() } catch (_: Throwable) {}
         }
         p("BITTI")
         System.exit(0)
