@@ -374,6 +374,21 @@ object RelayMain {
             val pkg = comp.substringBefore('/').trim()
             val firstLaunchOnTv = pkg.isNotEmpty() && !launchedOnVirtualDisplay.contains(pkg)
 
+            // Yeni bir uygulama veya oyun acildiginda, daha once acilmis olan diger uygulama/oyunlari
+            // arkaplanda tamamen kapat (force-stop) ki cihazi yavaslatmasin:
+            if (pkg.isNotEmpty()) {
+                val prevPackages = launchedOnVirtualDisplay.filter {
+                    it != pkg && it != "com.hk.mobile2tvgame" && it != "moe.shizuku.privileged.api"
+                }
+                for (prevPkg in prevPackages) {
+                    try {
+                        p("Onceki uygulama arkaplanda kapatiliyor: $prevPkg")
+                        runCmd("/system/bin/am", "force-stop", prevPkg)
+                        launchedOnVirtualDisplay.remove(prevPkg)
+                    } catch (_: Exception) {}
+                }
+            }
+
             // Eger bu uygulama daha once telefonun kendi ekraninda (Display 0) acik kaldiysa,
             // ilk kez sanal ekrana tasirken onceki Display 0 gorevini kapat ki sanal ekranda acilsin:
             if (firstLaunchOnTv && pkg != "com.hk.mobile2tvgame" && pkg != "moe.shizuku.privileged.api") {
