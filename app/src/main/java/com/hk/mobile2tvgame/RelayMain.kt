@@ -1,7 +1,15 @@
 package com.hk.mobile2tvgame
 
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
+import android.media.Image
+import android.media.MediaCodec
+import android.media.MediaFormat
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
+import java.io.ByteArrayOutputStream
+import java.io.PushbackInputStream
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -554,7 +562,181 @@ object RelayMain {
         return "telefon-ip"
     }
 
+    @Volatile
+    private var webClientCount = 0
+
+    @Volatile
+    private var latestJpegFrame: ByteArray? = null
+    private val jpegNotifyLock = Object()
+
+    private fun imageToNv21(image: Image, width: Int, height: Int, outBuf: ByteArray): ByteArray {
+        val needed = width * height * 3 / 2
+        val nv21 = if (outBuf.size >= needed) outBuf else ByteArray(needed)
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+
+        val yBuf = yPlane.buffer
+        val uBuf = uPlane.buffer
+        val vBuf = vPlane.buffer
+
+        val yRowStride = yPlane.rowStride
+        val yPixelStride = yPlane.pixelStride
+        var pos = 0
+
+        if (yPixelStride == 1 && yRowStride == width) {
+            yBuf.get(nv21, 0, width * height)
+            pos = width * height
+        } else {
+            val row = ByteArray(yRowStride)
+            for (r in 0 until height) {
+                val toRead = minOf(yRowStride, yBuf.remaining())
+                yBuf.get(row, 0, toRead)
+                if (yPixelStride == 1) {
+                    System.arraycopy(row, 0, nv21, pos, width)
+                    pos += width
+                } else {
+                    for (c in 0 until width) {
+                        nv21[pos++] = row[c * yPixelStride]
+                    }
+                }
+            }
+        }
+
+        val uvRowStride = vPlane.rowStride
+        val uvPixelStride = vPlane.pixelStride
+        val uvHeight = height / 2
+        val uvWidth = width / 2
+
+        for (r in 0 until uvHeight) {
+            val vRowStart = r * uvRowStride
+            val uRowStart = r * uPlane.rowStride
+            for (c in 0 until uvWidth) {
+                val vIdx = vRowStart + c * uvPixelStride
+                val uIdx = uRowStart + c * uPlane.pixelStride
+                nv21[pos++] = if (vIdx < vBuf.limit()) vBuf.get(vIdx) else 128.toByte()
+                nv21[pos++] = if (uIdx < uBuf.limit()) uBuf.get(uIdx) else 128.toByte()
+            }
+        }
+        return nv21
+    }
+
+    private fun startWebDecoderLoopIfNeeded() {
+        thread(isDaemon = true) {
+            val h = ByteArray(12)
+            val bb = ByteBuffer.wrap(h)
+            var payload = ByteArray(256 * 1024)
+            var nv21Buf = ByteArray(1920 * 1080 * 3 / 2)
+            val bos = ByteArrayOutputStream(65536)
+
+            while (true) {
+                if (webClientCount <= 0) {
+                    try { Thread.sleep(200) } catch (_: InterruptedException) {}
+                    continue
+                }
+                var s: Socket? = null
+                var codec: MediaCodec? = null
+                try {
+                    s = Socket("127.0.0.1", LOCAL_VIDEO_PORT).also {
+                        it.tcpNoDelay = true
+                        it.receiveBufferSize = 128 * 1024
+                    }
+                    val inp = DataInputStream(BufferedInputStream(s.getInputStream(), 32768))
+                    var decW = vw
+                    var decH = vh
+
+                    fun initCodec(w: Int, h: Int): MediaCodec {
+                        try { codec?.stop() } catch (_: Exception) {}
+                        try { codec?.release() } catch (_: Exception) {}
+                        val c = MediaCodec.createDecoderByType("video/avc")
+                        val fmt = MediaFormat.createVideoFormat("video/avc", w, h)
+                        fmt.setInteger(
+                            MediaFormat.KEY_COLOR_FORMAT,
+                            android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
+                        )
+                        c.configure(fmt, null, null, 0)
+                        c.start()
+                        return c
+                    }
+
+                    val info = MediaCodec.BufferInfo()
+                    var lastJpegTime = 0L
+
+                    while (webClientCount > 0) {
+                        inp.readFully(h)
+                        if ((h[0].toInt() and 0x80) != 0) {
+                            val w = bb.getInt(4)
+                            val ht = bb.getInt(8)
+                            if (w > 0 && ht > 0) {
+                                decW = w
+                                decH = ht
+                                codec = initCodec(decW, decH)
+                            }
+                        } else {
+                            val flags = bb.getLong(0)
+                            val size = bb.getInt(8)
+                            if (size < 0 || size > 8_000_000) break
+                            if (size > payload.size) payload = ByteArray(size)
+                            inp.readFully(payload, 0, size)
+                            val config = (flags and (1L shl 62)) != 0L
+                            val pts = flags and ((1L shl 61) - 1)
+                            if (codec == null) {
+                                codec = initCodec(decW, decH)
+                            }
+                            val c = codec!!
+                            val inIdx = c.dequeueInputBuffer(30_000)
+                            if (inIdx >= 0) {
+                                val inBuf = c.getInputBuffer(inIdx)
+                                if (inBuf != null) {
+                                    inBuf.clear()
+                                    inBuf.put(payload, 0, size)
+                                    c.queueInputBuffer(
+                                        inIdx, 0, size, pts,
+                                        if (config) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0
+                                    )
+                                }
+                            }
+                            var outIdx = c.dequeueOutputBuffer(info, 0)
+                            while (outIdx >= 0) {
+                                val now = System.currentTimeMillis()
+                                val shouldEncodeJpeg = (now - lastJpegTime) >= 38L
+                                if (shouldEncodeJpeg && info.size > 0) {
+                                    try {
+                                        val img = c.getOutputImage(outIdx)
+                                        if (img != null) {
+                                            val imgW = img.width
+                                            val imgH = img.height
+                                            nv21Buf = imageToNv21(img, imgW, imgH, nv21Buf)
+                                            img.close()
+                                            bos.reset()
+                                            val yuv = YuvImage(nv21Buf, ImageFormat.NV21, imgW, imgH, null)
+                                            yuv.compressToJpeg(Rect(0, 0, imgW, imgH), 62, bos)
+                                            latestJpegFrame = bos.toByteArray()
+                                            lastJpegTime = now
+                                            synchronized(jpegNotifyLock) {
+                                                jpegNotifyLock.notifyAll()
+                                            }
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+                                c.releaseOutputBuffer(outIdx, false)
+                                outIdx = c.dequeueOutputBuffer(info, 0)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    try { Thread.sleep(300) } catch (_: InterruptedException) {}
+                } finally {
+                    try { s?.close() } catch (_: Exception) {}
+                    try { codec?.stop() } catch (_: Exception) {}
+                    try { codec?.release() } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
     private fun startWebHttpServer() {
+        startWebDecoderLoopIfNeeded()
         thread(isDaemon = true) {
             try {
                 val ss = ServerSocket()
@@ -567,29 +749,102 @@ object RelayMain {
                     thread(isDaemon = true) {
                         try {
                             c.tcpNoDelay = true
-                            val reqLine = c.getInputStream().bufferedReader().readLine() ?: ""
+                            c.soTimeout = 10_000
+                            val pbIn = PushbackInputStream(c.getInputStream(), 4)
+                            val firstByte = pbIn.read()
+                            if (firstByte < 0) {
+                                try { c.close() } catch (_: Exception) {}
+                                return@thread
+                            }
+                            // Chrome HTTPS-First Modu once TLS ClientHello (0x16) gonderir;
+                            // aninda kapat ki Chrome 1ms icinde takilmadan HTTP'ye gecsin!
+                            if (firstByte == 0x16) {
+                                try { c.close() } catch (_: Exception) {}
+                                return@thread
+                            }
+                            pbIn.unread(firstByte)
+
+                            val reader = pbIn.bufferedReader(Charsets.UTF_8)
+                            val reqLine = reader.readLine() ?: ""
+                            // TCP RST hatasi olusmamasi icin tum HTTP istek basliklarini (bos satira kadar) oku:
+                            while (true) {
+                                val hLine = reader.readLine() ?: break
+                                if (hLine.isEmpty()) break
+                            }
+
                             val out = BufferedOutputStream(c.getOutputStream(), 32768)
-                            if (reqLine.contains("GET /frame.png")) {
-                                val disp = if (displayId > 0) displayId.toString() else "0"
-                                val pr = ProcessBuilder("/system/bin/screencap", "-d", disp, "-p").start()
-                                val bytes = pr.inputStream.readBytes()
-                                pr.waitFor()
-                                val hdr = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${bytes.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-                                out.write(hdr.toByteArray())
-                                out.write(bytes)
+                            if (reqLine.contains("GET /stream.mjpg")) {
+                                c.soTimeout = 0
+                                webClientCount++
+                                try {
+                                    val hdr = "HTTP/1.1 200 OK\r\n" +
+                                            "Content-Type: multipart/x-mixed-replace; boundary=m2tframe\r\n" +
+                                            "Cache-Control: no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0\r\n" +
+                                            "Pragma: no-cache\r\n" +
+                                            "Connection: close\r\n\r\n"
+                                    out.write(hdr.toByteArray(Charsets.UTF_8))
+                                    out.flush()
+                                    var lastSent: ByteArray? = null
+                                    while (!c.isClosed) {
+                                        var jpg = latestJpegFrame
+                                        if (jpg == null || jpg === lastSent) {
+                                            synchronized(jpegNotifyLock) {
+                                                try { jpegNotifyLock.wait(250) } catch (_: InterruptedException) {}
+                                            }
+                                            jpg = latestJpegFrame
+                                        }
+                                        if (jpg != null && jpg !== lastSent) {
+                                            lastSent = jpg
+                                            val partHdr = "--m2tframe\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpg.size}\r\n\r\n"
+                                            out.write(partHdr.toByteArray(Charsets.UTF_8))
+                                            out.write(jpg)
+                                            out.write("\r\n".toByteArray(Charsets.UTF_8))
+                                            out.flush()
+                                        }
+                                    }
+                                } finally {
+                                    webClientCount = (webClientCount - 1).coerceAtLeast(0)
+                                }
+                            } else if (reqLine.contains("GET /favicon.ico")) {
+                                val hdr = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+                                out.write(hdr.toByteArray(Charsets.UTF_8))
                                 out.flush()
                             } else {
-                                val html = """<!doctype html><html><head><meta charset="utf-8"><title>Mobile2TvGame Web TV</title>
-<style>html,body{margin:0;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}
-img{width:100vw;height:100vh;object-fit:contain}</style></head>
-<body><img id="v" src="/frame.png"><script>
-const v=document.getElementById('v');
-function next(){const i=new Image();i.onload=()=>{v.src=i.src;setTimeout(next,40);};i.onerror=()=>setTimeout(next,300);i.src='/frame.png?t='+Date.now();}
-next();
-</script></body></html>"""
+                                val html = """<!doctype html>
+<html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mobile2TvGame Canli TV Yayini</title>
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#fff}
+  #streamImg{width:100vw;height:100vh;object-fit:contain;display:block}
+  #fsBtn{position:fixed;top:12px;right:12px;background:rgba(20,30,55,0.85);color:#fff;
+    border:1px solid #4da3ff;border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer;z-index:10}
+</style></head>
+<body>
+  <button id="fsBtn" onclick="toggleFs()">⛶ Tam Ekran</button>
+  <img id="streamImg" src="/stream.mjpg" alt="Canli Yayin Bekleniyor...">
+  <script>
+    const btn = document.getElementById('fsBtn');
+    function toggleFs(){
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(()=>{});
+      } else {
+        document.exitFullscreen().catch(()=>{});
+      }
+    }
+    document.addEventListener('fullscreenchange', ()=>{
+      btn.style.display = document.fullscreenElement ? 'none' : 'block';
+    });
+  </script>
+</body></html>"""
                                 val body = html.toByteArray(Charsets.UTF_8)
-                                val hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${body.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-                                out.write(hdr.toByteArray())
+                                val hdr = "HTTP/1.1 200 OK\r\n" +
+                                        "Content-Type: text/html; charset=utf-8\r\n" +
+                                        "Content-Length: ${body.size}\r\n" +
+                                        "Cache-Control: no-store\r\n" +
+                                        "Connection: close\r\n\r\n"
+                                out.write(hdr.toByteArray(Charsets.UTF_8))
                                 out.write(body)
                                 out.flush()
                             }
