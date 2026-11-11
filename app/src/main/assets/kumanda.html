@@ -5,28 +5,34 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Kumanda</title>
 <style>
-  :root{--bg:#0b0e14;--line:#2a3350;--acc:#4da3ff;--warn:#ff9f43;--ok:#2ecc71;--txt:#cfd8ff}
+  :root{--bg:#0b0e14;--line:#2a3350;--acc:#4da3ff;--warn:#ff9f43;--ok:#2ecc71;--danger:#ff5252;--txt:#cfd8ff}
   *{box-sizing:border-box;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;touch-action:none;
     font-family:system-ui,sans-serif;color:var(--txt)}
   canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
-  #bar{position:fixed;top:4px;left:50%;transform:translateX(-50%);display:flex;gap:4px;align-items:center;z-index:2;
-    flex-wrap:nowrap;white-space:nowrap;background:rgba(11,14,20,.78);padding:3px 6px;border-radius:11px;border:1px solid rgba(42,51,80,.7)}
-  #bar button{background:rgba(24,32,58,.9);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px}
+
+  /* Suruklenebilir Ust / Gizli Menu Cubugu */
+  #bar{position:fixed;top:4px;left:50%;transform:translateX(-50%);display:flex;gap:4px;align-items:center;z-index:3;
+    flex-wrap:nowrap;white-space:nowrap;background:rgba(11,14,20,.82);padding:3px 6px;border-radius:11px;
+    border:1px solid rgba(42,51,80,.8);box-shadow:0 3px 10px rgba(0,0,0,.45);touch-action:none}
+  #bar.custom-pos{transform:none}
+  #bar button{background:rgba(24,32,58,.92);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px}
   #bar button.active{border-color:var(--warn);color:var(--warn)}
-  #bar button.on-btn{border-color:var(--ok);color:var(--ok);background:rgba(20,52,38,.9)}
+  #bar button.on-btn{border-color:var(--ok);color:var(--ok);background:rgba(20,52,38,.92);font-weight:600}
   #bar button.help-btn{border-color:var(--acc);color:#fff;background:#1d3566;font-weight:600}
+  #bar button.exit-btn{border-color:rgba(255,82,82,.65);color:#ff8a8a;background:rgba(60,20,26,.88);font-weight:600}
+  #minBarBtn{cursor:grab;font-weight:700;border-color:var(--acc) !important;color:#fff !important;background:#1a2b52 !important}
   #bar.collapsed > *:not(#minBarBtn){display:none !important}
-  #bar.collapsed{left:8px;transform:none;padding:2px}
-  #info{font:10.5px monospace;opacity:.85;min-width:76px;text-align:center}
+  #bar.collapsed{padding:2px;border-radius:10px}
+  #info{font:10.5px monospace;opacity:.85;min-width:68px;text-align:center}
 
   /* Uygulamalar, Ayarlar ve Rehber Panelleri */
   .modal{position:fixed;inset:0;background:rgba(11,14,20,.97);z-index:5;display:none;flex-direction:column;
     padding:12px 18px;box-sizing:border-box}
-  .modal .top{display:flex;gap:10px;align-items:center;margin-bottom:12px}
-  .modal .top h3{margin:0;flex:1;font-size:17px;color:var(--acc)}
+  .modal .top{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+  .modal .top h3{margin:0;flex:1;font-size:16.5px;color:var(--acc)}
   #q{flex:1;background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:15.5px;-webkit-user-select:text;user-select:text}
-  .modal .top button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 15px;font-size:13.5px;white-space:nowrap}
+  .modal .top button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 14px;font-size:13.5px;white-space:nowrap}
 
   /* Buyutulmus Ikonlu Uygulama Izgarasi (Varsayilan: Buyuk) */
   #applist{overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(225px,1fr));gap:12px;
@@ -42,6 +48,7 @@
   .app-name{font-weight:700;font-size:15.5px;color:#e8f0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .app-pkg{font-size:11.5px;color:#788bb8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .app-rec-badge{font-size:11px;color:var(--warn);font-weight:700;letter-spacing:.3px}
+  .app-game-tag{color:#2ecc71;font-weight:700}
 
   /* Cok Buyuk (XL) Gorunum Secenegi */
   #applist.size-xl{grid-template-columns:repeat(auto-fill,minmax(275px,1fr));gap:14px}
@@ -58,15 +65,24 @@
   #applist.size-sm .app-pkg, #applist.size-sm .app-rec-badge{font-size:10.5px}
 
   /* Ayarlar Icerigi */
-  .settings-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;touch-action:pan-y;padding-bottom:12px}
+  .settings-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:10px;touch-action:pan-y;padding-bottom:14px}
   .s-card{background:#13192b;border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
-  .s-card h4{margin:0;color:var(--acc);font-size:14px;border-bottom:1px solid var(--line);padding-bottom:5px}
-  .s-row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13.5px}
+  .s-card.wide-card{grid-column:1 / -1;border-color:rgba(77,163,255,.5);background:#121b30}
+  .s-card h4{margin:0;color:var(--acc);font-size:14px;border-bottom:1px solid var(--line);padding-bottom:5px;display:flex;justify-content:space-between;align-items:center}
+  .s-row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px}
   .s-row label{flex:1}
   .s-row input[type="checkbox"]{width:20px;height:20px;accent-color:var(--acc)}
   .s-row input[type="range"]{width:115px;accent-color:var(--acc)}
-  .s-row select{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:13px;max-width:190px}
+  .s-row input[type="text"]{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:6px 9px;font-size:13px;width:165px;-webkit-user-select:text;user-select:text}
+  .s-row select{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:12.5px;max-width:195px}
   .s-sub{font-size:11px;color:#7f8db8}
+  .quick-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:2px}
+  .q-btn{background:#1b2848;color:#e3ecff;border:1px solid var(--acc);border-radius:8px;padding:7px 10px;font-size:12.5px;font-weight:600;flex:1;min-width:120px;text-align:center}
+  .q-btn.ok-btn{border-color:var(--ok);color:#fff;background:#164a32}
+  .q-btn.warn-btn{border-color:var(--warn);color:var(--warn);background:#261f18}
+  .q-btn.exit-btn{border-color:var(--danger);color:#ff8a8a;background:#2b161b}
+  #streamLogBox{background:#090d16;color:#8ab4f8;border:1px solid #1e2946;border-radius:7px;padding:7px 9px;
+    font:11px monospace;max-height:78px;overflow-y:auto;white-space:pre-wrap;display:none;touch-action:pan-y}
 
   /* Rehber (Beni Oku) Icerigi */
   .guide-scroll{overflow-y:auto;touch-action:pan-y;display:flex;flex-direction:column;gap:10px;padding-bottom:16px;line-height:1.45;font-size:13.5px}
@@ -86,8 +102,8 @@
 <canvas id="cv"></canvas>
 
 <div id="bar">
-  <button id="minBarBtn" title="Ust Cubugu Kucult/Buyut">▲</button>
-  <button id="helpBtn" class="help-btn">📖 Beni Oku</button>
+  <button id="minBarBtn" title="Tikla: Kucult/Buyut | Basili Tut & Surukle: Tasi">▲</button>
+  <button id="streamBtn" class="on-btn" title="TV Yayinini Baslat / Durum">▶️ Yayin</button>
   <button id="modeBtn">Mod: IMLEC</button>
   <button id="previewBtn">📺 Ekran</button>
   <button id="ctrlStyleBtn" style="display:none">Sol: 🕹️ Joystick</button>
@@ -96,7 +112,9 @@
   <button id="appBtn">Uygulamalar</button>
   <button id="setBtn">⚙ Ayarlar</button>
   <button id="backBtn">Geri</button>
+  <button id="helpBtn" class="help-btn">📖</button>
   <button id="syncBtn" title="GitHub'dan Yenile">↻</button>
+  <button id="exitBtn" class="exit-btn" title="Uygulamadan Cik">🚪</button>
   <span id="info">-</span>
 </div>
 
@@ -113,18 +131,69 @@
 <!-- Ayarlar Paneli -->
 <div id="settingsModal" class="modal">
   <div class="top">
-    <h3>Kumanda, Canli Ekran ve Oyun Kolu Ayarlari</h3>
+    <h3>⚙ Yayin, Kumanda ve Sistem Ayarlari</h3>
     <button id="closeSetBtn">Kaydet & Kapat</button>
   </div>
   <div class="settings-grid">
-    <!-- Canli Ekran ve Ayna Ayarlari -->
+    <!-- 1. TV Yayini, Shizuku ve Cozunurluk (Eski Ilk Ekran Kontrolleri) -->
+    <div class="s-card wide-card">
+      <h4>
+        <span>📡 TV Yayini, Shizuku & Cozunurluk Kontrolu</span>
+        <span id="streamStatusBadge" style="font-size:12px;color:#ff9f43">Kontrol ediliyor...</span>
+      </h4>
+      <div class="quick-actions">
+        <button id="btnShizukuPerm" class="q-btn">🔑 1) Shizuku Izni Iste</button>
+        <button id="btnStartStream" class="q-btn ok-btn">▶️ 2) Yayini Baslat</button>
+        <button id="btnStopStream" class="q-btn exit-btn">⏹️ 3) Yayini Durdur</button>
+        <button id="setDevBtn" class="q-btn">⚙️ Kablosuz Hata Ayiklama</button>
+        <button id="setShizukuBtn" class="q-btn warn-btn">⚡ Shizuku'yu Ac</button>
+      </div>
+      <div class="s-row" style="flex-wrap:wrap;gap:8px;margin-top:2px">
+        <label for="inpDisplay">Sanal Ekran Cozunurlugu (GENISLIKxYUKSEKLIK/DPI):</label>
+        <input id="inpDisplay" type="text" value="1920x1080/360">
+        <div style="display:flex;gap:5px">
+          <button type="button" id="pre720Btn" class="q-btn" style="min-width:auto;padding:5px 9px;font-size:11.5px">⚡ 720p (Tablet/Akici)</button>
+          <button type="button" id="pre900Btn" class="q-btn" style="min-width:auto;padding:5px 9px;font-size:11.5px">⚖️ 900p</button>
+          <button type="button" id="pre1080Btn" class="q-btn" style="min-width:auto;padding:5px 9px;font-size:11.5px">💎 1080p</button>
+        </div>
+      </div>
+      <div class="s-row" style="flex-wrap:wrap;gap:8px">
+        <label for="inpStartApp">Yayinla Birlikte Acilacak Paket:</label>
+        <input id="inpStartApp" type="text" value="com.android.chrome">
+        <label for="inpVersion" style="flex:0;white-space:nowrap">scrcpy surumu:</label>
+        <input id="inpVersion" type="text" value="5.0.1" style="width:70px">
+        <button type="button" id="toggleLogBtn" class="q-btn" style="flex:0;min-width:auto;padding:5px 10px;font-size:11.5px">📋 Loglar</button>
+        <button type="button" id="resetBarPosBtn" class="q-btn" style="flex:0;min-width:auto;padding:5px 10px;font-size:11.5px">📍 Menuyu Ortala</button>
+        <button type="button" id="setExitBtn" class="q-btn exit-btn" style="flex:0;min-width:auto;padding:5px 10px;font-size:11.5px">🚪 Uygulamadan Cik</button>
+      </div>
+      <div id="streamLogBox">Henuz yayin logu yok.</div>
+    </div>
+
+    <!-- 2. Otomatik Mod & Canli Ekran Ayarlari -->
     <div class="s-card">
-      <h4>📺 Canli Ekran Onizleme & Ayna</h4>
+      <h4>🚀 Otomatik Mod & Canli Ekran</h4>
+      <div class="s-row">
+        <label for="selGameAutoMode">Oyun Acildiginda Varsayilan Mod</label>
+        <select id="selGameAutoMode">
+          <option value="ayna">Mod: AYNA (Dogrudan Dokunmatik)</option>
+          <option value="kumanda">Mod: KUMANDA (Joystick/Direksiyon)</option>
+          <option value="imlec">Mod: IMLEC (Touchpad)</option>
+          <option value="keep">Degistirme (Mevcut Modda Kal)</option>
+        </select>
+      </div>
+      <div class="s-row">
+        <label for="selAppAutoMode">Program Acildiginda Varsayilan Mod</label>
+        <select id="selAppAutoMode">
+          <option value="imlec">Mod: IMLEC (Touchpad)</option>
+          <option value="ayna">Mod: AYNA (Dogrudan Dokunmatik)</option>
+          <option value="kumanda">Mod: KUMANDA (Oyun Kolu)</option>
+          <option value="keep">Degistirme (Mevcut Modda Kal)</option>
+        </select>
+      </div>
       <div class="s-row">
         <label for="chkShowScreen">Telefonda Oyun / Program Ekranini Goster</label>
         <input id="chkShowScreen" type="checkbox">
       </div>
-      <div class="s-sub">Acildiginda TV'deki oyun/program telefon ekraninda da canli gorunur; <b>Mod: AYNA</b> ile ekranda nereye dokunursaniz dogrudan orasi tiklanir!</div>
       <div class="s-row">
         <label for="chkFullArea">Imlec ve Ayna Ekranin Tamamini Kaplasin</label>
         <input id="chkFullArea" type="checkbox">
@@ -139,7 +208,7 @@
       </div>
     </div>
 
-    <!-- Oyun Kolu (KUMANDA) Ayarlari -->
+    <!-- 3. Oyun Kolu (KUMANDA) Ayarlari -->
     <div class="s-card">
       <h4>🎮 Oyun Kolu (Mod: KUMANDA)</h4>
       <div class="s-row">
@@ -164,9 +233,9 @@
       </div>
     </div>
 
-    <!-- Kaydirma Cubuklari -->
+    <!-- 4. Kaydirma Cubuklari ve Hiz -->
     <div class="s-card">
-      <h4>⇅ Sayfa Kaydirma Cubuklari</h4>
+      <h4>⇅ Kaydirma Cubuklari & Hiz</h4>
       <div class="s-row">
         <label for="chkVBar">Sag Kenar Dikey Kaydirma Cubugu</label>
         <input id="chkVBar" type="checkbox">
@@ -186,11 +255,6 @@
           <option value="touch">Dokunmatik (Yukari it = Sayfa iner)</option>
         </select>
       </div>
-    </div>
-
-    <!-- Hiz ve Boyut -->
-    <div class="s-card">
-      <h4>⚡ Hiz ve Boyut</h4>
       <div class="s-row">
         <label>Kaydirma Hizi: <span id="lblScrollSpeed">1.6x</span></label>
         <input id="rngScrollSpeed" type="range" min="0.6" max="3.2" step="0.2" value="1.6">
@@ -215,6 +279,15 @@
   </div>
   <div class="guide-scroll">
     <div class="g-box">
+      <h4>⚡ Hizli Sistem Kisayollari (Tek Tikla Ac)</h4>
+      <div class="quick-actions">
+        <button id="guideDevBtn" class="q-btn">⚙️ Gelistirici Secenekleri / Kablosuz Hata Ayiklama</button>
+        <button id="guideShizukuBtn" class="q-btn warn-btn">⚡ Shizuku Uygulamasini Ac</button>
+        <button id="guideStreamBtn" class="q-btn ok-btn">📡 Yayin Ayarlarini Ac</button>
+      </div>
+    </div>
+
+    <div class="g-box">
       <h4>1. Sistem ve Ag Gereksinimleri</h4>
       <ul>
         <li><b>Android Surumu:</b> Telefon veya tabletiniz <b>Android 11 veya uzeri</b> olmalidir.</li>
@@ -228,7 +301,7 @@
       <ol>
         <li>Cihazinizda <b>Ayarlar &gt; Telefon/Tablet Hakkinda</b> menusune girin.</li>
         <li><b>Derleme Numarasi (Build Number)</b> (Xiaomi cihazlarda <i>MIUI / HyperOS Surumu</i>) uzerine art arda <b>7 kez</b> dokunun.</li>
-        <li><b>Ayarlar &gt; Sistem / Ek Ayarlar &gt; Gelistirici Secenekleri</b> menusune girin:
+        <li>Yukaridaki <b>"⚙️ Gelistirici Secenekleri / Kablosuz Hata Ayiklama"</b> dugmesine basarak dogrudan menuyu acin:
           <ul>
             <li><b>USB Hata Ayiklama</b> secenegini <b>ACIN</b>.</li>
             <li><b>Kablosuz Hata Ayiklama (Wireless Debugging)</b> secenegini <b>ACIN</b>.</li>
@@ -246,26 +319,16 @@
     </div>
 
     <div class="g-box">
-      <h4>4. Shizuku Kurulumu ve Baslatilmasi</h4>
-      <ol>
-        <li>Google Play Store'dan <b>Shizuku</b> uygulamasini telefon/tabletinize indirip acin.</li>
-        <li>Shizuku icinde <b>"Kablosuz hata ayiklama ile baslat"</b> altindaki <b>"Eslestirme (Pairing)"</b> dugmesine basin.</li>
-        <li>Gelistirici Secenekleri &gt; <b>Kablosuz Hata Ayiklama</b> menusunden <b>"Cihazi eslestirme koduyla eslestir"</b> secenegine dokunun ve <b>6 haneli kodu</b> bildirim cubugundaki Shizuku kutusuna girin.</li>
-        <li>Shizuku ana ekranina donup <b>"Baslat (Start)"</b> dugmesine basin.</li>
-      </ol>
-    </div>
-
-    <div class="g-box">
-      <h4>5. Canli Ekran (📺 Ekran), Ayna ve Oyun Kolu (KUMANDA) Kullanimi</h4>
+      <h4>4. Yayin Baslatma, Otomatik Mod ve Suruklenebilir Menu</h4>
       <ul>
-        <li><b>📺 Ekran (Canli Onizleme):</b> Ust bardaki <b>"📺 Ekran"</b> butonuna (veya Ayarlar'a) basarak TV'deki oyun/programi telefon ekraninda da canli gorebilirsiniz!</li>
-        <li><b>Mod: AYNA (Dogrudan Dokunmatik):</b> <b>📺 Ekran</b> acikken oyunun veya programin neresine dokunursaniz dogrudan orasi aktif olur. Sol ustteki <b>▲</b> dugmesiyle ust cubugu kucultebilirsiniz.</li>
-        <li><b>Mod: KUMANDA (🕹️ Joystick / ➕ Oklar / 🛞 Direksiyon):</b> Parmaginizi bastiginiz anda yakalar, parmaginizi cektiginiz anda aninda birakir.</li>
+        <li><b>▶️ Yayin Baslatma:</b> Ust bardaki <b>"▶️ Yayin"</b> butonuna (veya <b>⚙ Ayarlar</b>'a) basarak Shizuku iznini verip TV yayinini dogrudan bu ekrandan baslatabilirsiniz.</li>
+        <li><b>Otomatik Mod Secimi:</b> <b>Uygulamalar</b>'dan bir <b>oyun</b> actiginizda otomatik olarak <b>Mod: AYNA</b>, normal bir <b>program</b> actiginizda <b>Mod: IMLEC</b> secilir (Ayarlar'dan degistirilebilir).</li>
+        <li><b>Suruklenebilir Ust Menu:</b> Sol ustteki <b>▲ / ▼ Menü</b> dugmesine dokunarak menuyu gizleyebilir, <b>basili tutup surukleyerek</b> ekranin istediginiz yerine tasiyabilirsiniz!</li>
       </ul>
     </div>
   </div>
   <div class="g-footer">
-    <label><input id="chkHideGuide" type="checkbox"> Acilista otomatik gosterme (ustteki "📖 Beni Oku" butonundan her zaman acilabilir)</label>
+    <label><input id="chkHideGuide" type="checkbox"> Acilista otomatik gosterme (ustteki "📖" butonundan her zaman acilabilir)</label>
     <button id="closeGuideBtn">Anladim, Basla</button>
   </div>
 </div>
@@ -276,6 +339,11 @@ addEventListener('selectstart', e => e.preventDefault(), {passive:false});
 
 /* ============ KULLANICI AYARLARI ============ */
 const DEFAULT_SETTINGS = {
+  displaySpec: '1920x1080/360',
+  startAppPkg: 'com.android.chrome',
+  scrcpyVer: '5.0.1',
+  gameAutoMode: 'ayna',    // Oyun acildiginda varsayilan mod: 'ayna' | 'kumanda' | 'imlec' | 'keep'
+  appAutoMode: 'imlec',    // Program acildiginda varsayilan mod: 'imlec' | 'ayna' | 'kumanda' | 'keep'
   showScreen: false,
   fullScreenArea: true,
   hybridTap: true,
@@ -290,18 +358,199 @@ const DEFAULT_SETTINGS = {
   leftStyle: 'joystick',
   steerTarget: 'analog',
   tiltSens: 1.5,
-  appCardSize: 'lg' // 'lg' (Buyuk - 58px) | 'xl' (Cok Buyuk - 72px) | 'sm' (Normal - 44px)
+  appCardSize: 'lg',
+  barX: null,              // Suruklenebilir ust menu X konumu (null = ortali)
+  barY: 4                  // Suruklenebilir ust menu Y konumu
 };
 
 let CFG = Object.assign({}, DEFAULT_SETTINGS);
 try {
-  const s = JSON.parse(localStorage.getItem('m2t_cfg_v5') || localStorage.getItem('m2t_cfg_v4') || '{}');
+  const s = JSON.parse(localStorage.getItem('m2t_cfg_v6') || localStorage.getItem('m2t_cfg_v5') || '{}');
   CFG = Object.assign({}, DEFAULT_SETTINGS, s);
 } catch(e) {}
 
 function saveCfg(){
-  try { localStorage.setItem('m2t_cfg_v5', JSON.stringify(CFG)); } catch(e) {}
+  try { localStorage.setItem('m2t_cfg_v6', JSON.stringify(CFG)); } catch(e) {}
 }
+
+/* ============ HIZLI KISAYOL, YAYIN & SHIZUKU FONKSIYONLARI ============ */
+const streamBtn = document.getElementById('streamBtn');
+const streamStatusBadge = document.getElementById('streamStatusBadge');
+const streamLogBox = document.getElementById('streamLogBox');
+
+function refreshStreamStateUI(){
+  if (!window.Android || typeof Android.shizukuState !== 'function') {
+    streamStatusBadge.textContent = 'Durum: Mevcut APK (Yayin kontrolu icin yeni APK kurun)';
+    return;
+  }
+  try {
+    const st = JSON.parse(Android.shizukuState());
+    if (st.streaming) {
+      streamBtn.textContent = '🟢 Yayin Aktif';
+      streamBtn.classList.add('on-btn');
+      streamStatusBadge.style.color = '#2ecc71';
+    } else {
+      streamBtn.textContent = '▶️ Yayin';
+      streamBtn.classList.remove('on-btn');
+      streamStatusBadge.style.color = st.granted ? '#4da3ff' : '#ff9f43';
+    }
+    const shizukuTxt = st.running ? (st.granted ? 'Shizuku Hazir ✓' : 'Shizuku Izni Gerekli') : 'Shizuku Calismiyor';
+    streamStatusBadge.textContent = shizukuTxt + ' | ' + (st.status || '');
+    if (st.logs) {
+      streamLogBox.textContent = st.logs;
+      streamLogBox.scrollTop = streamLogBox.scrollHeight;
+    }
+  } catch(e) {}
+}
+
+window.onStreamStateChanged = function(){
+  refreshStreamStateUI();
+};
+
+function handleTopStreamBtn(){
+  if (!window.Android || typeof Android.shizukuState !== 'function') {
+    openSettingsModal();
+    return;
+  }
+  try {
+    const st = JSON.parse(Android.shizukuState());
+    if (st.streaming) {
+      // Yayin aktifken tiklanirsa Ayarlar > Yayin kontrolunu ac
+      openSettingsModal();
+    } else if (!st.running || !st.granted) {
+      Android.requestShizuku();
+      openSettingsModal();
+    } else {
+      // Shizuku hazirsa tek tikla dogrudan yayini baslat!
+      Android.startStream(CFG.displaySpec || '1920x1080/360', CFG.startAppPkg || 'com.android.chrome', CFG.scrcpyVer || '5.0.1');
+      refreshStreamStateUI();
+    }
+  } catch(e) {
+    openSettingsModal();
+  }
+}
+
+function doExitKumanda(){
+  try {
+    if (window.Android && typeof Android.setPreviewRect === 'function') {
+      Android.setPreviewRect(0, 0, 1, 1, false);
+    }
+    if (window.Android && typeof Android.exitKumanda === 'function') {
+      Android.exitKumanda();
+      return;
+    }
+    if (window.Android && typeof Android.setWindowFocusable === 'function') {
+      Android.setWindowFocusable(true);
+    }
+  } catch(e) {}
+  try { window.close(); } catch(e) {}
+  try { history.back(); } catch(e) {}
+}
+
+function doOpenDevSettings(){
+  try {
+    if (window.Android && typeof Android.openDevSettings === 'function') {
+      Android.openDevSettings();
+      return;
+    }
+    if (window.Android && typeof Android.launch === 'function') {
+      Android.launch('com.android.settings/.Settings$DevelopmentSettingsDashboardActivity');
+    }
+  } catch(e) {}
+}
+
+function doOpenShizuku(){
+  try {
+    if (window.Android && typeof Android.openShizuku === 'function') {
+      Android.openShizuku();
+      return;
+    }
+    if (window.Android && typeof Android.launch === 'function') {
+      Android.launch('moe.shizuku.privileged.api/moe.shizuku.manager.MainActivity');
+    }
+  } catch(e) {}
+}
+
+/* ============ SURUKLENEBILIR UST / GIZLI MENU CUBUGU ============ */
+const bar = document.getElementById('bar'), minBarBtn = document.getElementById('minBarBtn');
+
+function applyBarPosition(){
+  if (CFG.barX === null || CFG.barX === undefined) {
+    bar.classList.remove('custom-pos');
+    bar.style.left = '50%';
+    bar.style.top = (CFG.barY || 4) + 'px';
+    return;
+  }
+  bar.classList.add('custom-pos');
+  const rect = bar.getBoundingClientRect();
+  const bw = rect.width || 60;
+  const bh = rect.height || 34;
+  const clampedX = Math.max(4, Math.min(Math.max(4, innerWidth - bw - 4), CFG.barX));
+  const clampedY = Math.max(2, Math.min(Math.max(2, innerHeight - bh - 4), CFG.barY || 4));
+  bar.style.left = clampedX + 'px';
+  bar.style.top = clampedY + 'px';
+}
+
+let barDrag = { active: false, moved: false, sx: 0, sy: 0, startLeft: 0, startTop: 0 };
+
+minBarBtn.addEventListener('touchstart', (e) => {
+  if (e.touches.length !== 1) return;
+  e.stopPropagation();
+  const t = e.touches[0];
+  const rect = bar.getBoundingClientRect();
+  barDrag.active = true;
+  barDrag.moved = false;
+  barDrag.sx = t.clientX;
+  barDrag.sy = t.clientY;
+  barDrag.startLeft = rect.left;
+  barDrag.startTop = rect.top;
+}, {passive: false});
+
+minBarBtn.addEventListener('touchmove', (e) => {
+  if (!barDrag.active || e.touches.length !== 1) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const t = e.touches[0];
+  const dx = t.clientX - barDrag.sx;
+  const dy = t.clientY - barDrag.sy;
+  if (!barDrag.moved && Math.hypot(dx, dy) < 8) return;
+  barDrag.moved = true;
+  CFG.barX = Math.round(barDrag.startLeft + dx);
+  CFG.barY = Math.round(barDrag.startTop + dy);
+  applyBarPosition();
+}, {passive: false});
+
+minBarBtn.addEventListener('touchend', (e) => {
+  if (!barDrag.active) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const wasMoved = barDrag.moved;
+  barDrag.active = false;
+  barDrag.moved = false;
+  if (wasMoved) {
+    saveCfg();
+    applyBarPosition();
+  } else {
+    bar.classList.toggle('collapsed');
+    minBarBtn.textContent = bar.classList.contains('collapsed') ? '▼ Menü' : '▲';
+    setTimeout(applyBarPosition, 10);
+  }
+}, {passive: false});
+
+minBarBtn.addEventListener('click', (e) => {
+  // Masaustu / fare testi icin yedek
+  if (e.detail === 0) return;
+  bar.classList.toggle('collapsed');
+  minBarBtn.textContent = bar.classList.contains('collapsed') ? '▼ Menü' : '▲';
+  setTimeout(applyBarPosition, 10);
+});
+
+document.getElementById('resetBarPosBtn').addEventListener('click', () => {
+  CFG.barX = null;
+  CFG.barY = 4;
+  saveCfg();
+  applyBarPosition();
+});
 
 /* ============ VARSAYILAN OYUN PROFILI ============ */
 const DEFAULT_CONTROLS = [
@@ -335,7 +584,6 @@ function getDpadCtrls(){ return controls.filter(c => c.tip === 'yon_ok'); }
 
 let TV_ORAN = 16/9;
 const cv = document.getElementById('cv'), cx = cv.getContext('2d');
-const bar = document.getElementById('bar'), minBarBtn = document.getElementById('minBarBtn');
 const info = document.getElementById('info'), modeBtn = document.getElementById('modeBtn');
 const previewBtn = document.getElementById('previewBtn');
 const ctrlStyleBtn = document.getElementById('ctrlStyleBtn');
@@ -356,6 +604,16 @@ try {
   const saved = localStorage.getItem('m2t_mode');
   if (MODES.includes(saved)) mode = saved;
 } catch(e) {}
+
+function setControllerMode(newMode){
+  if (!MODES.includes(newMode)) return;
+  finishScrollGesture();
+  mode = newMode;
+  try { localStorage.setItem('m2t_mode', mode); } catch(e) {}
+  computeLayout();
+  updateTopBar();
+  draw();
+}
 
 let curX = 0.5, curY = 0.5;
 let maxTouchesInGesture = 0;
@@ -533,6 +791,7 @@ function updateTopBar(){
     editBtn.style.display = 'none';
     resetBtn.style.display = 'none';
   }
+  applyBarPosition();
 }
 
 function computeLayout(){
@@ -1286,20 +1545,11 @@ cv.addEventListener('touchmove', onMove, {passive:false});
 cv.addEventListener('touchend', onEnd, {passive:false});
 cv.addEventListener('touchcancel', onEnd, {passive:false});
 
-minBarBtn.addEventListener('click', ()=>{
-  bar.classList.toggle('collapsed');
-  minBarBtn.textContent = bar.classList.contains('collapsed') ? '▼ Menü' : '▲';
-});
+streamBtn.addEventListener('click', handleTopStreamBtn);
 
 modeBtn.addEventListener('click', ()=>{
-  finishScrollGesture();
   const idx = (MODES.indexOf(mode) + 1) % MODES.length;
-  mode = MODES[idx];
-  try { localStorage.setItem('m2t_mode', mode); } catch(e) {}
-  info.textContent = '-';
-  computeLayout();
-  updateTopBar();
-  draw();
+  setControllerMode(MODES[idx]);
 });
 
 previewBtn.addEventListener('click', ()=>{
@@ -1344,6 +1594,15 @@ document.getElementById('syncBtn').addEventListener('click', ()=>{
   try { if (window.Android && Android.refreshFromGithub) Android.refreshFromGithub(); } catch(e) {}
 });
 
+document.getElementById('exitBtn').addEventListener('click', doExitKumanda);
+document.getElementById('setExitBtn').addEventListener('click', doExitKumanda);
+
+document.getElementById('setDevBtn').addEventListener('click', doOpenDevSettings);
+document.getElementById('guideDevBtn').addEventListener('click', doOpenDevSettings);
+
+document.getElementById('setShizukuBtn').addEventListener('click', doOpenShizuku);
+document.getElementById('guideShizukuBtn').addEventListener('click', doOpenShizuku);
+
 /* ---------- Rehber (Beni Oku) Modal Mantigi ---------- */
 const guideModal = document.getElementById('guideModal');
 const chkHideGuide = document.getElementById('chkHideGuide');
@@ -1362,6 +1621,10 @@ function closeGuide(){
 document.getElementById('helpBtn').addEventListener('click', openGuide);
 document.getElementById('closeGuideTopBtn').addEventListener('click', closeGuide);
 document.getElementById('closeGuideBtn').addEventListener('click', closeGuide);
+document.getElementById('guideStreamBtn').addEventListener('click', ()=>{
+  closeGuide();
+  openSettingsModal();
+});
 
 try {
   if (localStorage.getItem('m2t_hide_guide') !== '1') {
@@ -1369,8 +1632,13 @@ try {
   }
 } catch(e) {}
 
-/* ---------- Ayarlar Modal Mantigi ---------- */
+/* ---------- Ayarlar & Yayin Kontrol Modal Mantigi ---------- */
 const settingsModal = document.getElementById('settingsModal');
+const inpDisplay = document.getElementById('inpDisplay');
+const inpStartApp = document.getElementById('inpStartApp');
+const inpVersion = document.getElementById('inpVersion');
+const selGameAutoMode = document.getElementById('selGameAutoMode');
+const selAppAutoMode = document.getElementById('selAppAutoMode');
 const chkShowScreen = document.getElementById('chkShowScreen');
 const chkFullArea = document.getElementById('chkFullArea');
 const chkHybridTap = document.getElementById('chkHybridTap');
@@ -1390,7 +1658,54 @@ const rngCurSpeed = document.getElementById('rngCurSpeed');
 const lblCurSpeed = document.getElementById('lblCurSpeed');
 const rngBarSize = document.getElementById('rngBarSize');
 
+[inpDisplay, inpStartApp, inpVersion].forEach(inp => {
+  inp.addEventListener('focus', () => {
+    try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(true); } catch(e) {}
+  });
+  inp.addEventListener('blur', () => {
+    try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
+  });
+});
+
+document.getElementById('pre720Btn').addEventListener('click', ()=>{ inpDisplay.value = '1280x720/220'; CFG.displaySpec = inpDisplay.value; saveCfg(); });
+document.getElementById('pre900Btn').addEventListener('click', ()=>{ inpDisplay.value = '1600x900/280'; CFG.displaySpec = inpDisplay.value; saveCfg(); });
+document.getElementById('pre1080Btn').addEventListener('click', ()=>{ inpDisplay.value = '1920x1080/360'; CFG.displaySpec = inpDisplay.value; saveCfg(); });
+
+document.getElementById('toggleLogBtn').addEventListener('click', ()=>{
+  streamLogBox.style.display = (streamLogBox.style.display === 'block') ? 'none' : 'block';
+  refreshStreamStateUI();
+});
+
+document.getElementById('btnShizukuPerm').addEventListener('click', ()=>{
+  try { if (window.Android && Android.requestShizuku) Android.requestShizuku(); } catch(e) {}
+  refreshStreamStateUI();
+});
+
+document.getElementById('btnStartStream').addEventListener('click', ()=>{
+  CFG.displaySpec = inpDisplay.value.trim() || '1920x1080/360';
+  CFG.startAppPkg = inpStartApp.value.trim() || 'com.android.chrome';
+  CFG.scrcpyVer = inpVersion.value.trim() || '5.0.1';
+  saveCfg();
+  streamLogBox.style.display = 'block';
+  try {
+    if (window.Android && Android.startStream) {
+      Android.startStream(CFG.displaySpec, CFG.startAppPkg, CFG.scrcpyVer);
+    }
+  } catch(e) {}
+  refreshStreamStateUI();
+});
+
+document.getElementById('btnStopStream').addEventListener('click', ()=>{
+  try { if (window.Android && Android.stopStream) Android.stopStream(); } catch(e) {}
+  refreshStreamStateUI();
+});
+
 function syncSettingsUI(){
+  inpDisplay.value = CFG.displaySpec || '1920x1080/360';
+  inpStartApp.value = CFG.startAppPkg || 'com.android.chrome';
+  inpVersion.value = CFG.scrcpyVer || '5.0.1';
+  selGameAutoMode.value = CFG.gameAutoMode || 'ayna';
+  selAppAutoMode.value = CFG.appAutoMode || 'imlec';
   chkShowScreen.checked = !!CFG.showScreen;
   chkFullArea.checked = !!CFG.fullScreenArea;
   chkHybridTap.checked = !!CFG.hybridTap;
@@ -1410,15 +1725,24 @@ function syncSettingsUI(){
   lblCurSpeed.textContent = Number(CFG.curSpeed).toFixed(1) + 'x';
   rngBarSize.value = CFG.barSize;
   document.getElementById('lblBarSize').textContent = CFG.barSize + 'px';
+  refreshStreamStateUI();
 }
 
-document.getElementById('setBtn').addEventListener('click', ()=>{
+function openSettingsModal(){
   syncSettingsUI();
   settingsModal.style.display = 'flex';
   syncNativePreviewRect();
-});
+}
+
+document.getElementById('setBtn').addEventListener('click', openSettingsModal);
 
 document.getElementById('closeSetBtn').addEventListener('click', ()=>{
+  try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
+  CFG.displaySpec = inpDisplay.value.trim() || '1920x1080/360';
+  CFG.startAppPkg = inpStartApp.value.trim() || 'com.android.chrome';
+  CFG.scrcpyVer = inpVersion.value.trim() || '5.0.1';
+  CFG.gameAutoMode = selGameAutoMode.value;
+  CFG.appAutoMode = selAppAutoMode.value;
   CFG.showScreen = chkShowScreen.checked;
   CFG.fullScreenArea = chkFullArea.checked;
   CFG.hybridTap = chkHybridTap.checked;
@@ -1589,7 +1913,7 @@ function draw(){
       cx.fillStyle = '#4da3ff'; cx.font = '15px system-ui';
       cx.fillText('DOKUNMA ALANI (TAM EKRAN): 1 Parmak Imlec/Tik | 2 Parmak Kaydirma', area.x + area.w/2, area.y + area.h/2 - 14);
       cx.fillStyle = '#5c6b9c'; cx.font = '13px system-ui';
-      cx.fillText('(Ustteki "📺 Ekran" butonuyla oyun/program goruntusunu telefonda acabilirsiniz)', area.x + area.w/2, area.y + area.h/2 + 14);
+      cx.fillText('(Ustteki "▶️ Yayin" ile TV\'ye baglanabilir, "📺 Ekran" ile goruntuyu telefonda acabilirsiniz)', area.x + area.w/2, area.y + area.h/2 + 14);
     }
     const px = area.x + curX * area.w, py = area.y + curY * area.h;
     cx.strokeStyle = scroller.down ? '#ff9f43' : '#4da3ff'; cx.lineWidth = 2.5;
@@ -1686,7 +2010,7 @@ function draw(){
   }
 }
 
-/* ---------- Buyutulmus Ikonlu Uygulama Secici + Geri ---------- */
+/* ---------- Buyutulmus Ikonlu Uygulama Secici + Otomatik Oyun/Program Modu ---------- */
 const panel = document.getElementById('panel'), applist = document.getElementById('applist');
 const q = document.getElementById('q'), appSizeBtn = document.getElementById('appSizeBtn');
 let APPS = null;
@@ -1715,13 +2039,32 @@ appSizeBtn.addEventListener('click', ()=>{
   applyAppListSize();
 });
 
+const GAME_KEYWORDS = [
+  'game', 'oyun', 'asphalt', 'gameloft', 'pubg', 'brawl', 'supercell', 'clash',
+  'roblox', 'minecraft', 'mojang', 'ea.game', 'fifa', 'pes', 'konami', 'ubisoft',
+  'activision', 'callofduty', 'freefire', 'garena', 'mobilelegends', 'moonton',
+  'genshin', 'hoyoverse', 'subway', 'kiloo', 'sybo', 'angrybirds', 'rovio',
+  'candycrush', 'king.com', '8ball', 'miniclip', ' racing', 'drift', 'carx',
+  'standoff', 'criticalops', 'shadowfight', 'nekki', 'talkingtom', 'outfit7',
+  'hillclimb', 'fingersoft', 'chess', 'ludo', 'okey', 'batak', 'tavla', 'zynga',
+  'dreamleague', 'firsttouch', 'madout', 'trafficrider', 'skgames', 'word', 'puzzle'
+];
+
+function isAppGame(app){
+  if (app && app.g === true) return true;
+  const key = ((app.n || '') + ' ' + (app.c || '')).toLowerCase();
+  return GAME_KEYWORDS.some(k => key.includes(k));
+}
+
 const PALETTE = [
   ['#2563eb','#1d4ed8'], ['#e11d48','#be123c'], ['#059669','#047857'],
   ['#d97706','#b45309'], ['#7c3aed','#6d28d9'], ['#0891b2','#0e7490'],
   ['#db2777','#be185d'], ['#4f46e5','#4338ca'], ['#ea580c','#c2410c']
 ];
 
-function buildFallbackIconSvg(name, comp){
+function buildFallbackIconSvg(app){
+  const name = app.n || '';
+  const comp = app.c || '';
   const key = (name + ' ' + comp).toLowerCase();
   let sym = '';
   let c1 = null, c2 = null;
@@ -1730,9 +2073,9 @@ function buildFallbackIconSvg(name, comp){
     sym = '🌐'; c1 = '#2563eb'; c2 = '#1e40af';
   } else if (key.includes('youtube')) {
     sym = '▶️'; c1 = '#dc2626'; c2 = '#991b1b';
-  } else if (key.includes('asphalt') || key.includes('rac') || key.includes('car') || key.includes('drift') || key.includes('needfor')) {
+  } else if (key.includes('asphalt') || key.includes('rac') || key.includes('drift')) {
     sym = '🏎️'; c1 = '#ea580c'; c2 = '#9a3412';
-  } else if (key.includes('game') || key.includes('pubg') || key.includes('brawl') || key.includes('clash') || key.includes('roblox') || key.includes('minecraft') || key.includes('pes') || key.includes('fifa')) {
+  } else if (isAppGame(app)) {
     sym = '🎮'; c1 = '#7c3aed'; c2 = '#4c1d95';
   } else if (key.includes('netflix') || key.includes('tv') || key.includes('video') || key.includes('vlc') || key.includes('kodi') || key.includes('film')) {
     sym = '🎬'; c1 = '#e11d48'; c2 = '#881337';
@@ -1782,7 +2125,7 @@ function resolveAppIcon(app, imgEl){
     imgEl.src = jsIconCache.get(app.c);
     return;
   }
-  const fallback = buildFallbackIconSvg(app.n, app.c);
+  const fallback = buildFallbackIconSvg(app);
   imgEl.src = fallback;
   if (window.Android && typeof Android.appIcon === 'function') {
     setTimeout(() => {
@@ -1825,6 +2168,7 @@ function renderApps(){
   applist.textContent = '';
   for (const a of items) {
     const isRec = rec.includes(a.c);
+    const game = isAppGame(a);
     const b = document.createElement('button');
     b.className = 'app-item' + (isRec ? ' recent' : '');
 
@@ -1841,26 +2185,30 @@ function renderApps(){
     title.textContent = a.n;
     meta.appendChild(title);
 
+    const sub = document.createElement('div');
     if (isRec) {
-      const badge = document.createElement('div');
-      badge.className = 'app-rec-badge';
-      badge.textContent = '★ Son Kullanilan';
-      meta.appendChild(badge);
+      sub.className = 'app-rec-badge';
+      sub.textContent = (game ? '🎮 Oyun • ' : '📱 Program • ') + '★ Son Kullanilan';
     } else {
-      const pkg = document.createElement('div');
-      pkg.className = 'app-pkg';
-      pkg.textContent = a.c.split('/')[0];
-      meta.appendChild(pkg);
+      sub.className = 'app-pkg';
+      sub.innerHTML = (game ? '<span class="app-game-tag">🎮 Oyun</span> • ' : '') + a.c.split('/')[0];
     }
+    meta.appendChild(sub);
 
     b.appendChild(img);
     b.appendChild(meta);
 
     b.addEventListener('click', () => {
       pushRecent(a.c);
+      // Oyun vs Program otomatik mod secimi:
+      const targetMode = game ? (CFG.gameAutoMode || 'ayna') : (CFG.appAutoMode || 'imlec');
+      if (targetMode !== 'keep' && MODES.includes(targetMode)) {
+        setControllerMode(targetMode);
+      }
       try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
       try { Android.launch(a.c); } catch(e) {}
       panel.style.display = 'none';
+      info.textContent = (game ? 'OYUN: ' : 'UYG: ') + mode.toUpperCase();
       syncNativePreviewRect();
     });
     applist.appendChild(b);
@@ -1887,6 +2235,7 @@ q.addEventListener('input', renderApps);
 document.getElementById('backBtn').addEventListener('click', () => { try { Android.back(); } catch(e) {} });
 
 resize();
+refreshStreamStateUI();
 </script>
 </body>
 </html>
