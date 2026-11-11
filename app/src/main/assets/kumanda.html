@@ -83,6 +83,15 @@
   .q-btn.exit-btn{border-color:var(--danger);color:#ff8a8a;background:#2b161b}
   #streamLogBox{background:#090d16;color:#8ab4f8;border:1px solid #1e2946;border-radius:7px;padding:7px 9px;
     font:11px monospace;max-height:78px;overflow-y:auto;white-space:pre-wrap;display:none;touch-action:pan-y}
+  .ctrl-chip-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .ctrl-chip{display:inline-flex;align-items:center;gap:5px;background:#18223f;border:1px solid #2e3d66;
+    border-radius:8px;padding:4px 7px;font-size:12px;color:#e5eeff}
+  .ctrl-chip b{color:var(--acc);font-size:13px;min-width:18px;text-align:center}
+  .ctrl-chip button{background:#233158;color:#cfd8ff;border:1px solid #384b7a;border-radius:5px;
+    padding:2px 6px;font-size:11px;line-height:1.1}
+  .ctrl-chip button.del-chip{background:#3a1820;border-color:#7a2e3d;color:#ff8a8a;font-weight:700}
+  .prof-badge{font-size:11.5px;padding:4px 8px;border-radius:6px;background:#162442;border:1px solid #2a3d66;color:#9ab0e6}
+  .prof-badge.saved{background:#133326;border-color:#2ecc71;color:#2ecc71;font-weight:600}
 
   /* Rehber (Beni Oku) Icerigi */
   .guide-scroll{overflow-y:auto;touch-action:pan-y;display:flex;flex-direction:column;gap:10px;padding-bottom:16px;line-height:1.45;font-size:13.5px}
@@ -108,6 +117,9 @@
   <button id="previewBtn">📺 Ekran</button>
   <button id="ctrlStyleBtn" style="display:none">Sol: 🕹️ Joystick</button>
   <button id="editBtn" style="display:none">Tus Hedefi</button>
+  <button id="editDragModeBtn" style="display:none" title="Hedef Yeri veya Tus Yeri Tasi">🎯 Hedef Tasi</button>
+  <button id="quickAddCtrlBtn" style="display:none" title="Yeni Tus Ekle">➕ Tus</button>
+  <button id="quickDelCtrlBtn" style="display:none" class="exit-btn" title="Secili Tusu Sil">🗑️ Sil</button>
   <button id="resetBtn" style="display:none">Sifirla</button>
   <button id="appBtn">Uygulamalar</button>
   <button id="setBtn">⚙ Ayarlar</button>
@@ -208,9 +220,20 @@
       </div>
     </div>
 
-    <!-- 3. Oyun Kolu (KUMANDA) Ayarlari -->
+    <!-- 3. Oyun Kolu (KUMANDA) & Oyun Bazli Tus Yonetimi -->
     <div class="s-card">
-      <h4>🎮 Oyun Kolu (Mod: KUMANDA)</h4>
+      <h4>
+        <span>🎮 Oyun Kolu & Oyun Bazli Tuslar</span>
+      </h4>
+      <div class="s-row">
+        <label for="selProfileApp">Profil Uygulamasi / Oyunu</label>
+        <select id="selProfileApp"></select>
+      </div>
+      <div id="profileStatusBadge" class="prof-badge">ℹ️ Bu uygulama icin kayitli ozel tus profili yok.</div>
+      <div class="s-row">
+        <label for="chkAutoProfileMode">Kayitli Tus Profili Varsa Otomatik KUMANDA Ac</label>
+        <input id="chkAutoProfileMode" type="checkbox">
+      </div>
       <div class="s-row">
         <label for="selLeftStyle">Sol Kontrol Tipi</label>
         <select id="selLeftStyle">
@@ -226,10 +249,24 @@
           <option value="buttons">Ayri Yon Tuslarina Bas (Yaris/Asphalt)</option>
         </select>
       </div>
-      <div class="s-sub">Asphalt gibi "ekrana dokunarak donulen" oyunlarda <b>Ayri Yon Tuslarina Bas</b> secenegini, normal joystickli oyunlarda <b>Sanal Joystick Cek</b> secenegini kullanin.</div>
       <div class="s-row">
         <label>Direksiyon Hassasiyeti: <span id="lblTiltSens">1.5x</span></label>
         <input id="rngTiltSens" type="range" min="0.6" max="3.0" step="0.2" value="1.5">
+      </div>
+      <div class="s-row" style="border-top:1px solid var(--line);padding-top:7px;flex-wrap:wrap;gap:6px">
+        <input id="inpNewBtnName" type="text" placeholder="Tus adi (C, R1, Fren...)" style="width:135px;flex:1">
+        <select id="selNewBtnSize" style="width:92px">
+          <option value="0.085">Normal</option>
+          <option value="0.105">Buyuk</option>
+          <option value="0.068">Kucuk</option>
+        </select>
+        <button type="button" id="btnAddExtraCtrl" class="q-btn ok-btn" style="flex:0;min-width:auto;padding:6px 10px">➕ Tus Ekle</button>
+      </div>
+      <div class="s-sub">Mevcut Aksiyon Tuslari (Boyutlandir veya ✕ ile Cikar):</div>
+      <div id="ctrlChipList" class="ctrl-chip-list"></div>
+      <div class="quick-actions" style="margin-top:4px">
+        <button type="button" id="btnSaveAppProfile" class="q-btn ok-btn" style="font-size:11.5px;padding:6px 8px">💾 Bu Oyuna Kaydet</button>
+        <button type="button" id="btnDeleteAppProfile" class="q-btn exit-btn" style="font-size:11.5px;padding:6px 8px">🗑️ Oyun Profilini Sil</button>
       </div>
     </div>
 
@@ -251,8 +288,8 @@
       <div class="s-row">
         <label for="selScrollDir">Kaydirma Yonu</label>
         <select id="selScrollDir">
-          <option value="wheel">Tekerlek (Asagi cek = Sayfa iner)</option>
           <option value="touch">Dokunmatik (Yukari it = Sayfa iner)</option>
+          <option value="wheel">Tekerlek (Asagi cek = Sayfa iner)</option>
         </select>
       </div>
       <div class="s-row">
@@ -342,16 +379,17 @@ const DEFAULT_SETTINGS = {
   displaySpec: '1920x1080/360',
   startAppPkg: 'com.android.chrome',
   scrcpyVer: '5.0.1',
-  gameAutoMode: 'ayna',    // Oyun acildiginda varsayilan mod: 'ayna' | 'kumanda' | 'imlec' | 'keep'
-  appAutoMode: 'imlec',    // Program acildiginda varsayilan mod: 'imlec' | 'ayna' | 'kumanda' | 'keep'
+  gameAutoMode: 'ayna',       // Kayitli tus profili olmayan oyun acildiginda varsayilan mod
+  appAutoMode: 'imlec',       // Kayitli tus profili olmayan program acildiginda varsayilan mod
+  autoProfileKumanda: true,   // Kayitli tus profili olan oyun/program acildiginda otomatik KUMANDA ac
   showScreen: false,
   fullScreenArea: true,
   hybridTap: true,
   screenDim: 0.20,
-  vBar: true,
-  hBar: true,
+  vBar: false,                // Varsayilan: Sag dikey kaydirma cubugu GIZLI
+  hBar: false,                // Varsayilan: Alt yatay kaydirma cubugu GIZLI
   twoFinger: true,
-  scrollDir: 'wheel',
+  scrollDir: 'touch',         // Varsayilan: Dokunmatik kaydirma yonu
   scrollSpeed: 1.6,
   curSpeed: 1.3,
   barSize: 52,
@@ -359,18 +397,28 @@ const DEFAULT_SETTINGS = {
   steerTarget: 'analog',
   tiltSens: 1.5,
   appCardSize: 'lg',
-  barX: null,              // Suruklenebilir ust menu X konumu (null = ortali)
-  barY: 4                  // Suruklenebilir ust menu Y konumu
+  barX: null,                 // Suruklenebilir ust menu X konumu (null = ortali)
+  barY: 4                     // Suruklenebilir ust menu Y konumu
 };
 
 let CFG = Object.assign({}, DEFAULT_SETTINGS);
 try {
-  const s = JSON.parse(localStorage.getItem('m2t_cfg_v6') || localStorage.getItem('m2t_cfg_v5') || '{}');
-  CFG = Object.assign({}, DEFAULT_SETTINGS, s);
+  const rawV7 = localStorage.getItem('m2t_cfg_v7');
+  if (rawV7) {
+    CFG = Object.assign({}, DEFAULT_SETTINGS, JSON.parse(rawV7));
+  } else {
+    const oldCfg = JSON.parse(localStorage.getItem('m2t_cfg_v6') || localStorage.getItem('m2t_cfg_v5') || '{}');
+    // Onceki surumden cozunurluk/menu yeri gibi ayarlari koru, ama yeni scroll varsayilanlarini uygula:
+    delete oldCfg.vBar;
+    delete oldCfg.hBar;
+    delete oldCfg.scrollDir;
+    CFG = Object.assign({}, DEFAULT_SETTINGS, oldCfg);
+    localStorage.setItem('m2t_cfg_v7', JSON.stringify(CFG));
+  }
 } catch(e) {}
 
 function saveCfg(){
-  try { localStorage.setItem('m2t_cfg_v6', JSON.stringify(CFG)); } catch(e) {}
+  try { localStorage.setItem('m2t_cfg_v7', JSON.stringify(CFG)); } catch(e) {}
 }
 
 /* ============ HIZLI KISAYOL, YAYIN & SHIZUKU FONKSIYONLARI ============ */
@@ -580,16 +628,136 @@ const DEFAULT_CONTROLS = [
 ];
 
 let controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
+let appProfiles = {};
 try {
-  const savedProfile = localStorage.getItem('m2t_controls_v3');
-  if (savedProfile) {
-    const parsed = JSON.parse(savedProfile);
-    if (Array.isArray(parsed) && parsed.length >= 9) controls = parsed;
-  }
+  appProfiles = JSON.parse(localStorage.getItem('m2t_app_profiles_v1') || '{}') || {};
+} catch(e) { appProfiles = {}; }
+
+let currentApp = { pkg: '__default__', name: 'Genel (Varsayilan)', comp: '', isGame: false };
+try {
+  const savedApp = JSON.parse(localStorage.getItem('m2t_active_app_v1') || 'null');
+  if (savedApp && savedApp.pkg) currentApp = savedApp;
 } catch(e) {}
 
-function saveControls(){
+function saveAppProfilesMap(){
+  try { localStorage.setItem('m2t_app_profiles_v1', JSON.stringify(appProfiles)); } catch(e) {}
+}
+
+function hasSavedProfileForPkg(pkg){
+  return !!(pkg && pkg !== '__default__' && appProfiles[pkg] && Array.isArray(appProfiles[pkg].controls));
+}
+
+function loadProfileForPkg(pkg){
+  if (pkg && appProfiles[pkg] && Array.isArray(appProfiles[pkg].controls) && appProfiles[pkg].controls.length >= 5) {
+    const p = appProfiles[pkg];
+    controls = JSON.parse(JSON.stringify(p.controls));
+    if (p.leftStyle) CFG.leftStyle = p.leftStyle;
+    if (p.steerTarget) CFG.steerTarget = p.steerTarget;
+    if (typeof p.tiltSens === 'number') CFG.tiltSens = p.tiltSens;
+    return true;
+  }
+  if (pkg === '__default__') {
+    try {
+      const legacy = JSON.parse(localStorage.getItem('m2t_controls_v3') || 'null');
+      if (Array.isArray(legacy) && legacy.length >= 5) {
+        controls = legacy;
+        return false;
+      }
+    } catch(e) {}
+  }
+  controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
+  return false;
+}
+
+// Baslangicta aktif uygulamanin profilini yukle
+loadProfileForPkg(currentApp.pkg);
+
+function saveControls(targetPkg){
+  const pkg = targetPkg || currentApp.pkg || '__default__';
   try { localStorage.setItem('m2t_controls_v3', JSON.stringify(controls)); } catch(e) {}
+  if (pkg && pkg !== '__default__') {
+    appProfiles[pkg] = {
+      pkg: pkg,
+      name: currentApp.name || pkg,
+      comp: currentApp.comp || pkg,
+      isGame: !!currentApp.isGame,
+      controls: JSON.parse(JSON.stringify(controls)),
+      leftStyle: CFG.leftStyle || 'joystick',
+      steerTarget: CFG.steerTarget || 'analog',
+      tiltSens: CFG.tiltSens || 1.5,
+      updatedAt: Date.now()
+    };
+    saveAppProfilesMap();
+  } else {
+    appProfiles['__default__'] = {
+      pkg: '__default__',
+      name: 'Genel (Varsayilan)',
+      controls: JSON.parse(JSON.stringify(controls)),
+      leftStyle: CFG.leftStyle || 'joystick',
+      steerTarget: CFG.steerTarget || 'analog',
+      tiltSens: CFG.tiltSens || 1.5,
+      updatedAt: Date.now()
+    };
+    saveAppProfilesMap();
+  }
+}
+
+function deleteProfileForPkg(pkg){
+  const target = pkg || currentApp.pkg;
+  if (target && appProfiles[target]) {
+    delete appProfiles[target];
+    saveAppProfilesMap();
+  }
+  controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
+  try { localStorage.setItem('m2t_controls_v3', JSON.stringify(controls)); } catch(e) {}
+}
+
+const AUTO_BTN_NAMES = ['C', 'Z', 'R1', 'L1', 'R2', 'L2', 'D', 'E', 'F', 'G', 'H', 'T1', 'T2', 'T3', 'T4'];
+const EXTRA_BTN_SLOTS = [
+  {x:0.58, y:0.76}, {x:0.58, y:0.52}, {x:0.84, y:0.22}, {x:0.70, y:0.24},
+  {x:0.56, y:0.28}, {x:0.44, y:0.76}, {x:0.44, y:0.52}, {x:0.44, y:0.28}
+];
+
+function addExtraActionButton(customName, customRadius){
+  const existingNames = new Set(controls.filter(c => c.tip === 'dugme').map(c => (c.ad || '').toUpperCase()));
+  let name = (customName || '').trim().slice(0, 8);
+  if (!name) {
+    name = AUTO_BTN_NAMES.find(n => !existingNames.has(n)) || ('T' + (controls.filter(c => c.tip === 'dugme').length + 1));
+  }
+  const r = Math.min(0.15, Math.max(0.05, parseFloat(customRadius) || 0.085));
+  // Bos bir slot sec
+  let slot = {x: 0.58, y: 0.65};
+  for (const cand of EXTRA_BTN_SLOTS) {
+    const busy = controls.some(c => c.tip === 'dugme' && Math.hypot(c.x - cand.x, c.y - cand.y) < 0.09);
+    if (!busy) { slot = cand; break; }
+  }
+  const newBtn = {
+    tip: 'dugme',
+    ad: name,
+    x: slot.x,
+    y: slot.y,
+    r: r,
+    oyun: { x: slot.x, y: slot.y }
+  };
+  controls.push(newBtn);
+  selectedCtrl = newBtn;
+  saveControls();
+  draw();
+  return newBtn;
+}
+
+function removeActionButton(targetCtrl){
+  const idx = controls.indexOf(targetCtrl);
+  if (idx >= 0 && controls[idx].tip === 'dugme') {
+    controls.splice(idx, 1);
+    if (selectedCtrl === targetCtrl) {
+      selectedCtrl = getVisibleGamepadControls()[0] || null;
+    }
+    saveControls();
+    draw();
+    return true;
+  }
+  return false;
 }
 
 function getJoyCtrl(){ return controls.find(c => c.tip === 'cubuk') || controls[0]; }
@@ -602,6 +770,10 @@ const info = document.getElementById('info'), modeBtn = document.getElementById(
 const previewBtn = document.getElementById('previewBtn');
 const ctrlStyleBtn = document.getElementById('ctrlStyleBtn');
 const editBtn = document.getElementById('editBtn'), resetBtn = document.getElementById('resetBtn');
+const editDragModeBtn = document.getElementById('editDragModeBtn');
+const quickAddCtrlBtn = document.getElementById('quickAddCtrlBtn');
+const quickDelCtrlBtn = document.getElementById('quickDelCtrlBtn');
+let editDragKind = 'target'; // 'target' = oyundaki hedefi (🎯) tasi, 'button' = ekrandaki tus dairesini tasi
 let W=0, H=0, area={x:0,y:0,w:0,h:0};
 let vBarRect = null, hBarRect = null;
 
@@ -795,14 +967,22 @@ function updateTopBar(){
     ctrlStyleBtn.style.display = 'inline-block';
     ctrlStyleBtn.textContent = LEFT_LABELS[CFG.leftStyle] || LEFT_LABELS.joystick;
     editBtn.style.display = 'inline-block';
+    editDragModeBtn.style.display = editMode ? 'inline-block' : 'none';
+    quickAddCtrlBtn.style.display = editMode ? 'inline-block' : 'none';
+    quickDelCtrlBtn.style.display = (editMode && selectedCtrl && selectedCtrl.tip === 'dugme') ? 'inline-block' : 'none';
     resetBtn.style.display = editMode ? 'inline-block' : 'none';
     editBtn.classList.toggle('active', editMode);
-    editBtn.textContent = editMode ? 'Kaydet / Bitir' : 'Tus Hedefi';
+    editBtn.textContent = editMode ? '💾 Kaydet' : 'Tus Hedefi';
+    editDragModeBtn.textContent = (editDragKind === 'button') ? '🔘 Tus Yeri' : '🎯 Hedef Yeri';
+    editDragModeBtn.classList.toggle('active', editDragKind === 'button');
   } else {
     editMode = false;
     selectedCtrl = null;
     ctrlStyleBtn.style.display = 'none';
     editBtn.style.display = 'none';
+    editDragModeBtn.style.display = 'none';
+    quickAddCtrlBtn.style.display = 'none';
+    quickDelCtrlBtn.style.display = 'none';
     resetBtn.style.display = 'none';
   }
   applyBarPosition();
@@ -1222,14 +1402,36 @@ function onStart(e){
       info.textContent = nx.toFixed(3)+' , '+ny.toFixed(3);
     } else if (mode === 'kumanda') {
       if (editMode) {
+        // Once dogrudan 🎯 hedef halkasina dokunuldu mu kontrol et
+        const visList = getVisibleGamepadControls();
+        let hitTargetCtrl = null;
+        let bestTDist = 34;
+        for (const vc of visList) {
+          const tx = area.x + vc.oyun.x * area.w;
+          const ty = area.y + vc.oyun.y * area.h;
+          const td = Math.hypot(x - tx, y - ty);
+          if (td <= bestTDist) {
+            bestTDist = td;
+            hitTargetCtrl = vc;
+          }
+        }
         const c = hitGamepadControl(x,y);
-        if (c) {
+        if (hitTargetCtrl && (!c || editDragKind === 'target')) {
+          selectedCtrl = hitTargetCtrl;
+          active.set(t.identifier, {kind:'edit_target', c:hitTargetCtrl, lx:x, ly:y});
+          send(3, 0, hitTargetCtrl.oyun.x, hitTargetCtrl.oyun.y);
+          info.textContent = '🎯 ' + hitTargetCtrl.ad + ' -> ' + hitTargetCtrl.oyun.x.toFixed(2) + ',' + hitTargetCtrl.oyun.y.toFixed(2);
+          updateTopBar();
+        } else if (c) {
           selectedCtrl = c;
-          active.set(t.identifier, {kind:'edit_btn', c, lx:x, ly:y});
+          const dragKind = (editDragKind === 'button') ? 'edit_pos' : 'edit_target';
+          active.set(t.identifier, {kind: dragKind, c, lx:x, ly:y});
           send(3, 0, c.oyun.x, c.oyun.y);
-          info.textContent = c.ad + ' -> ' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2);
+          info.textContent = (dragKind === 'edit_pos' ? '🔘 ' : '🎯 ') + c.ad;
+          updateTopBar();
         } else if (selectedCtrl) {
-          active.set(t.identifier, {kind:'edit_target', c:selectedCtrl, lx:x, ly:y});
+          const dragKind = (editDragKind === 'button') ? 'edit_pos' : 'edit_target';
+          active.set(t.identifier, {kind: dragKind, c:selectedCtrl, lx:x, ly:y});
           send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
         }
       } else {
@@ -1467,6 +1669,14 @@ function onMove(e){
         }
         info.textContent = 'OK: ' + hovered.ad;
       }
+    } else if (a.kind === 'edit_pos') {
+      const c = a.c;
+      const dx = x - a.lx, dy = y - a.ly;
+      a.lx = x; a.ly = y;
+      c.x = Math.min(0.95, Math.max(0.05, c.x + (dx / W)));
+      c.y = Math.min(0.94, Math.max(0.08, c.y + (dy / H)));
+      saveControls();
+      info.textContent = '🔘 ' + c.ad + ' (' + c.x.toFixed(2) + ',' + c.y.toFixed(2) + ')';
     } else if (a.kind === 'edit_btn' || a.kind === 'edit_target') {
       const c = a.c;
       const dx = x - a.lx, dy = y - a.ly;
@@ -1475,7 +1685,7 @@ function onMove(e){
       c.oyun.y = Math.min(0.98, Math.max(0.02, c.oyun.y + (dy / area.h)));
       saveControls();
       send(3, 0, c.oyun.x, c.oyun.y);
-      info.textContent = c.ad + ' -> ' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2);
+      info.textContent = '🎯 ' + c.ad + ' -> ' + c.oyun.x.toFixed(2) + ',' + c.oyun.y.toFixed(2);
     }
   }
   draw();
@@ -1578,6 +1788,9 @@ ctrlStyleBtn.addEventListener('click', ()=>{
   const idx = (LEFT_STYLES.indexOf(CFG.leftStyle) + 1) % LEFT_STYLES.length;
   CFG.leftStyle = LEFT_STYLES[idx];
   saveCfg();
+  if (currentApp.pkg && currentApp.pkg !== '__default__' && hasSavedProfileForPkg(currentApp.pkg)) {
+    saveControls(currentApp.pkg);
+  }
   updateTopBar();
   draw();
 });
@@ -1587,13 +1800,40 @@ editBtn.addEventListener('click', ()=>{
   const vis = getVisibleGamepadControls();
   if (editMode) {
     selectedCtrl = vis[0];
-    send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
-    info.textContent = selectedCtrl.ad + ' -> ' + selectedCtrl.oyun.x.toFixed(2) + ',' + selectedCtrl.oyun.y.toFixed(2);
+    if (selectedCtrl) {
+      send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
+      info.textContent = selectedCtrl.ad + ' -> ' + selectedCtrl.oyun.x.toFixed(2) + ',' + selectedCtrl.oyun.y.toFixed(2);
+    }
   } else {
-    info.textContent = 'Kaydedildi';
+    saveControls();
+    info.textContent = 'Profil Kaydedildi';
   }
   updateTopBar();
   draw();
+});
+
+editDragModeBtn.addEventListener('click', ()=>{
+  editDragKind = (editDragKind === 'target') ? 'button' : 'target';
+  updateTopBar();
+  info.textContent = (editDragKind === 'button') ? 'TUS YERI TASIMA' : 'OYUN HEDEFI TASIMA';
+  draw();
+});
+
+quickAddCtrlBtn.addEventListener('click', ()=>{
+  const nb = addExtraActionButton('', 0.085);
+  info.textContent = 'Eklendi: ' + nb.ad;
+  updateTopBar();
+  draw();
+});
+
+quickDelCtrlBtn.addEventListener('click', ()=>{
+  if (selectedCtrl && selectedCtrl.tip === 'dugme') {
+    const oldName = selectedCtrl.ad;
+    removeActionButton(selectedCtrl);
+    info.textContent = 'Silindi: ' + oldName;
+    updateTopBar();
+    draw();
+  }
 });
 
 resetBtn.addEventListener('click', ()=>{
@@ -1601,6 +1841,7 @@ resetBtn.addEventListener('click', ()=>{
   saveControls();
   selectedCtrl = getVisibleGamepadControls()[0];
   info.textContent = 'Varsayilana donuldu';
+  updateTopBar();
   draw();
 });
 
@@ -1671,8 +1912,17 @@ const lblScrollSpeed = document.getElementById('lblScrollSpeed');
 const rngCurSpeed = document.getElementById('rngCurSpeed');
 const lblCurSpeed = document.getElementById('lblCurSpeed');
 const rngBarSize = document.getElementById('rngBarSize');
+const selProfileApp = document.getElementById('selProfileApp');
+const profileStatusBadge = document.getElementById('profileStatusBadge');
+const chkAutoProfileMode = document.getElementById('chkAutoProfileMode');
+const inpNewBtnName = document.getElementById('inpNewBtnName');
+const selNewBtnSize = document.getElementById('selNewBtnSize');
+const btnAddExtraCtrl = document.getElementById('btnAddExtraCtrl');
+const ctrlChipList = document.getElementById('ctrlChipList');
+const btnSaveAppProfile = document.getElementById('btnSaveAppProfile');
+const btnDeleteAppProfile = document.getElementById('btnDeleteAppProfile');
 
-[inpDisplay, inpStartApp, inpVersion].forEach(inp => {
+[inpDisplay, inpStartApp, inpVersion, inpNewBtnName].forEach(inp => {
   inp.addEventListener('focus', () => {
     try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(true); } catch(e) {}
   });
@@ -1714,12 +1964,184 @@ document.getElementById('btnStopStream').addEventListener('click', ()=>{
   refreshStreamStateUI();
 });
 
+function populateProfileAppSelect(){
+  selProfileApp.textContent = '';
+  const allApps = loadApps();
+  const seen = new Set();
+
+  function addOpt(pkg, label){
+    if (!pkg || seen.has(pkg)) return;
+    seen.add(pkg);
+    const opt = document.createElement('option');
+    opt.value = pkg;
+    const hasProf = hasSavedProfileForPkg(pkg);
+    opt.textContent = (hasProf ? '🎯 ' : '') + label;
+    selProfileApp.appendChild(opt);
+  }
+
+  if (currentApp && currentApp.pkg && currentApp.pkg !== '__default__') {
+    addOpt(currentApp.pkg, currentApp.name + ' (Aktif)');
+  }
+  addOpt('__default__', '🌐 Genel (Varsayilan Profil)');
+
+  // Kayitli profilleri ekle
+  for (const pkg of Object.keys(appProfiles)) {
+    if (pkg === '__default__') continue;
+    const p = appProfiles[pkg];
+    addOpt(pkg, (p.name || pkg) + ' (Kayitli)');
+  }
+
+  // Son kullanilan ve diger uygulamalari ekle
+  const rec = getRecent();
+  for (const rComp of rec) {
+    const rPkg = rComp.split('/')[0];
+    const found = allApps.find(x => x.c === rComp || x.c.startsWith(rPkg + '/'));
+    addOpt(rPkg, found ? found.n : rPkg);
+  }
+  for (const a of allApps) {
+    const pkg = a.c.split('/')[0];
+    addOpt(pkg, a.n);
+  }
+
+  selProfileApp.value = (currentApp && currentApp.pkg) ? currentApp.pkg : '__default__';
+}
+
+function updateProfileStatusAndChips(){
+  const pkg = selProfileApp.value || currentApp.pkg || '__default__';
+  const isSaved = hasSavedProfileForPkg(pkg);
+  if (pkg === '__default__') {
+    profileStatusBadge.className = 'prof-badge';
+    profileStatusBadge.textContent = '🌐 Genel varsayilan tus dizilimi duzenleniyor.';
+  } else if (isSaved) {
+    profileStatusBadge.className = 'prof-badge saved';
+    profileStatusBadge.textContent = '✅ "' + (currentApp.name || pkg) + '" icin ozel tus profili KAYITLI (Acilinca otomatik hatirlanir).';
+  } else {
+    profileStatusBadge.className = 'prof-badge';
+    profileStatusBadge.textContent = 'ℹ️ "' + (currentApp.name || pkg) + '" icin henuz ozel profil yok (Tus ekleyip/kaydedince olusur).';
+  }
+
+  ctrlChipList.textContent = '';
+  const actBtns = getActionCtrls();
+  if (actBtns.length === 0) {
+    const empty = document.createElement('span');
+    empty.className = 's-sub';
+    empty.textContent = 'Hic aksiyon tusu yok. Yukaridan "+ Tus Ekle" ile ekleyebilirsiniz.';
+    ctrlChipList.appendChild(empty);
+    return;
+  }
+  for (const c of actBtns) {
+    const chip = document.createElement('div');
+    chip.className = 'ctrl-chip';
+
+    const title = document.createElement('b');
+    title.textContent = c.ad;
+    chip.appendChild(title);
+
+    const btnMinus = document.createElement('button');
+    btnMinus.type = 'button';
+    btnMinus.textContent = '➖';
+    btnMinus.title = 'Tusu Kucult';
+    btnMinus.addEventListener('click', () => {
+      c.r = Math.max(0.048, Number((c.r - 0.012).toFixed(3)));
+      saveControls(pkg);
+      updateProfileStatusAndChips();
+      draw();
+    });
+    chip.appendChild(btnMinus);
+
+    const btnPlus = document.createElement('button');
+    btnPlus.type = 'button';
+    btnPlus.textContent = '➕';
+    btnPlus.title = 'Tusu Buyut';
+    btnPlus.addEventListener('click', () => {
+      c.r = Math.min(0.155, Number((c.r + 0.012).toFixed(3)));
+      saveControls(pkg);
+      updateProfileStatusAndChips();
+      draw();
+    });
+    chip.appendChild(btnPlus);
+
+    const btnDel = document.createElement('button');
+    btnDel.type = 'button';
+    btnDel.className = 'del-chip';
+    btnDel.textContent = '✕';
+    btnDel.title = 'Tusu Cikar';
+    btnDel.addEventListener('click', () => {
+      removeActionButton(c);
+      updateProfileStatusAndChips();
+      updateTopBar();
+    });
+    chip.appendChild(btnDel);
+
+    ctrlChipList.appendChild(chip);
+  }
+}
+
+selProfileApp.addEventListener('change', () => {
+  const pkg = selProfileApp.value;
+  const allApps = loadApps();
+  const found = allApps.find(x => x.c.split('/')[0] === pkg);
+  if (pkg === '__default__') {
+    currentApp = { pkg: '__default__', name: 'Genel (Varsayilan)', comp: '', isGame: false };
+  } else {
+    const existingProf = appProfiles[pkg];
+    currentApp = {
+      pkg: pkg,
+      name: found ? found.n : (existingProf ? existingProf.name : pkg),
+      comp: found ? found.c : (existingProf ? existingProf.comp : pkg),
+      isGame: found ? isAppGame(found) : (existingProf ? !!existingProf.isGame : true)
+    };
+  }
+  try { localStorage.setItem('m2t_active_app_v1', JSON.stringify(currentApp)); } catch(e) {}
+  loadProfileForPkg(pkg);
+  selLeftStyle.value = CFG.leftStyle || 'joystick';
+  selSteerTarget.value = CFG.steerTarget || 'analog';
+  rngTiltSens.value = CFG.tiltSens || 1.5;
+  lblTiltSens.textContent = Number(CFG.tiltSens || 1.5).toFixed(1) + 'x';
+  updateProfileStatusAndChips();
+  updateTopBar();
+  draw();
+});
+
+btnAddExtraCtrl.addEventListener('click', () => {
+  const name = inpNewBtnName.value.trim();
+  const sz = parseFloat(selNewBtnSize.value) || 0.085;
+  addExtraActionButton(name, sz);
+  inpNewBtnName.value = '';
+  populateProfileAppSelect();
+  updateProfileStatusAndChips();
+  updateTopBar();
+});
+
+btnSaveAppProfile.addEventListener('click', () => {
+  const pkg = selProfileApp.value || currentApp.pkg || '__default__';
+  CFG.leftStyle = selLeftStyle.value;
+  CFG.steerTarget = selSteerTarget.value;
+  CFG.tiltSens = parseFloat(rngTiltSens.value);
+  saveCfg();
+  saveControls(pkg);
+  populateProfileAppSelect();
+  updateProfileStatusAndChips();
+  updateTopBar();
+  draw();
+});
+
+btnDeleteAppProfile.addEventListener('click', () => {
+  const pkg = selProfileApp.value || currentApp.pkg || '__default__';
+  deleteProfileForPkg(pkg);
+  populateProfileAppSelect();
+  updateProfileStatusAndChips();
+  updateTopBar();
+  draw();
+});
+
 function syncSettingsUI(){
   inpDisplay.value = CFG.displaySpec || '1920x1080/360';
   inpStartApp.value = CFG.startAppPkg || 'com.android.chrome';
   inpVersion.value = CFG.scrcpyVer || '5.0.1';
   selGameAutoMode.value = CFG.gameAutoMode || 'ayna';
   selAppAutoMode.value = CFG.appAutoMode || 'imlec';
+  chkAutoProfileMode.checked = (CFG.autoProfileKumanda !== false);
   chkShowScreen.checked = !!CFG.showScreen;
   chkFullArea.checked = !!CFG.fullScreenArea;
   chkHybridTap.checked = !!CFG.hybridTap;
@@ -1728,7 +2150,7 @@ function syncSettingsUI(){
   chkVBar.checked = !!CFG.vBar;
   chkHBar.checked = !!CFG.hBar;
   chkTwoFinger.checked = !!CFG.twoFinger;
-  selScrollDir.value = CFG.scrollDir || 'wheel';
+  selScrollDir.value = CFG.scrollDir || 'touch';
   selLeftStyle.value = CFG.leftStyle || 'joystick';
   selSteerTarget.value = CFG.steerTarget || 'analog';
   rngTiltSens.value = CFG.tiltSens || 1.5;
@@ -1739,6 +2161,8 @@ function syncSettingsUI(){
   lblCurSpeed.textContent = Number(CFG.curSpeed).toFixed(1) + 'x';
   rngBarSize.value = CFG.barSize;
   document.getElementById('lblBarSize').textContent = CFG.barSize + 'px';
+  populateProfileAppSelect();
+  updateProfileStatusAndChips();
   refreshStreamStateUI();
 }
 
@@ -1757,6 +2181,7 @@ document.getElementById('closeSetBtn').addEventListener('click', ()=>{
   CFG.scrcpyVer = inpVersion.value.trim() || '5.0.1';
   CFG.gameAutoMode = selGameAutoMode.value;
   CFG.appAutoMode = selAppAutoMode.value;
+  CFG.autoProfileKumanda = chkAutoProfileMode.checked;
   CFG.showScreen = chkShowScreen.checked;
   CFG.fullScreenArea = chkFullArea.checked;
   CFG.hybridTap = chkHybridTap.checked;
@@ -1772,6 +2197,9 @@ document.getElementById('closeSetBtn').addEventListener('click', ()=>{
   CFG.curSpeed = parseFloat(rngCurSpeed.value);
   CFG.barSize = parseInt(rngBarSize.value, 10);
   saveCfg();
+  if (currentApp && currentApp.pkg && hasSavedProfileForPkg(currentApp.pkg)) {
+    saveControls(currentApp.pkg);
+  }
   settingsModal.style.display = 'none';
   computeLayout();
   updateTopBar();
@@ -2199,13 +2627,19 @@ function renderApps(){
     title.textContent = a.n;
     meta.appendChild(title);
 
+    const pkg = a.c.split('/')[0];
+    const hasProf = hasSavedProfileForPkg(pkg);
     const sub = document.createElement('div');
-    if (isRec) {
+    if (hasProf) {
+      sub.className = 'app-rec-badge';
+      sub.style.color = '#2ecc71';
+      sub.textContent = '🎯 Ozel Tus Profili Kayitli' + (isRec ? ' • ★' : '');
+    } else if (isRec) {
       sub.className = 'app-rec-badge';
       sub.textContent = (game ? '🎮 Oyun • ' : '📱 Program • ') + '★ Son Kullanilan';
     } else {
       sub.className = 'app-pkg';
-      sub.innerHTML = (game ? '<span class="app-game-tag">🎮 Oyun</span> • ' : '') + a.c.split('/')[0];
+      sub.innerHTML = (game ? '<span class="app-game-tag">🎮 Oyun</span> • ' : '') + pkg;
     }
     meta.appendChild(sub);
 
@@ -2214,11 +2648,25 @@ function renderApps(){
 
     b.addEventListener('click', () => {
       pushRecent(a.c);
-      // Oyun vs Program otomatik mod secimi:
-      const targetMode = game ? (CFG.gameAutoMode || 'ayna') : (CFG.appAutoMode || 'imlec');
-      if (targetMode !== 'keep' && MODES.includes(targetMode)) {
-        setControllerMode(targetMode);
+      currentApp = { pkg: pkg, name: a.n, comp: a.c, isGame: game };
+      try { localStorage.setItem('m2t_active_app_v1', JSON.stringify(currentApp)); } catch(e) {}
+
+      // Eger bu oyun/uygulama icin kayitli bir tus profili varsa onu yukle ve KUMANDA moduna gec:
+      if (hasSavedProfileForPkg(pkg)) {
+        loadProfileForPkg(pkg);
+        saveCfg();
+        if (CFG.autoProfileKumanda !== false) {
+          setControllerMode('kumanda');
+        }
+      } else {
+        // Kayitli tus profili yoksa varsayilan tuslara don ve Ayna/Imlec moduna gec:
+        controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
+        const targetMode = game ? (CFG.gameAutoMode || 'ayna') : (CFG.appAutoMode || 'imlec');
+        if (targetMode !== 'keep' && MODES.includes(targetMode)) {
+          setControllerMode(targetMode);
+        }
       }
+
       try { if (window.Android && Android.setWindowFocusable) Android.setWindowFocusable(false); } catch(e) {}
       try {
         if (window.Android && typeof Android.shizukuState === 'function') {
@@ -2235,7 +2683,9 @@ function renderApps(){
         try { Android.launch(a.c); } catch(e2) {}
       }
       panel.style.display = 'none';
-      info.textContent = (game ? 'OYUN: ' : 'UYG: ') + mode.toUpperCase();
+      info.textContent = (hasSavedProfileForPkg(pkg) ? '🎯 ' : (game ? 'OYUN: ' : 'UYG: ')) + mode.toUpperCase();
+      updateTopBar();
+      draw();
       syncNativePreviewRect();
     });
     applist.appendChild(b);
