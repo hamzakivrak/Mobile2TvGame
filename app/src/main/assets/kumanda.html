@@ -178,6 +178,9 @@
         <button type="button" id="resetBarPosBtn" class="q-btn" style="flex:0;min-width:auto;padding:5px 10px;font-size:11.5px">📍 Menuyu Ortala</button>
         <button type="button" id="setExitBtn" class="q-btn exit-btn" style="flex:0;min-width:auto;padding:5px 10px;font-size:11.5px">🚪 Uygulamadan Cik</button>
       </div>
+      <div class="s-sub" style="background:#101c35;border:1px dashed var(--acc);border-radius:8px;padding:7px 10px;color:#cfe2ff;line-height:1.4">
+        🌐 <b>TV'de APK Olmadan Yansitma (Web Tarayici):</b> TV'de APK kurulu degilse, yayini baslattiktan sonra TV'nin kendi internet tarayicisindan <b id="webStreamUrlLbl" style="color:var(--ok);font-family:monospace;font-size:12.5px">http://telefon-ip:8080</b> adresine girerek de ekrani goruntuleyebilirsiniz.
+      </div>
       <div id="streamLogBox">Henuz yayin logu yok.</div>
     </div>
 
@@ -369,6 +372,7 @@
       <h4>4. Yayin Baslatma, Otomatik Mod ve Suruklenebilir Menu</h4>
       <ul>
         <li><b>▶️ Yayin Baslatma:</b> Ust bardaki <b>"▶️ Yayin"</b> butonuna (veya <b>⚙ Ayarlar</b>'a) basarak Shizuku iznini verip TV yayinini dogrudan bu ekrandan baslatabilirsiniz.</li>
+        <li><b>🌐 APK Olmadan Web Tarayicidan Baglanti:</b> TV'nizde APK kurulu degilse (veya Samsung/LG gibi farkli bir TV kullaniyorsaniz), TV'nin web tarayicisindan <span class="g-badge" id="guideWebUrlLbl">http://telefon-ip:8080</span> adresine girerek de yayini acabilirsiniz.</li>
         <li><b>Otomatik Mod Secimi:</b> <b>Uygulamalar</b>'dan bir <b>oyun</b> actiginizda otomatik olarak <b>Mod: AYNA</b>, normal bir <b>program</b> actiginizda <b>Mod: IMLEC</b> secilir (Ayarlar'dan degistirilebilir).</li>
         <li><b>Suruklenebilir Ust Menu:</b> Sol ustteki <b>▲ / ▼ Menü</b> dugmesine dokunarak menuyu gizleyebilir, <b>basili tutup surukleyerek</b> ekranin istediginiz yerine tasiyabilirsiniz!</li>
       </ul>
@@ -472,6 +476,13 @@ function refreshStreamStateUI(){
     if (st.logs) {
       streamLogBox.textContent = st.logs;
       streamLogBox.scrollTop = streamLogBox.scrollHeight;
+      const mUrl = st.logs.match(/http:\/\/[0-9.]+:8080/);
+      if (mUrl) {
+        const u1 = document.getElementById('webStreamUrlLbl');
+        const u2 = document.getElementById('guideWebUrlLbl');
+        if (u1) u1.textContent = mUrl[0];
+        if (u2) u2.textContent = mUrl[0];
+      }
     }
   } catch(e) {}
 }
