@@ -23,25 +23,39 @@
   /* Uygulamalar, Ayarlar ve Rehber Panelleri */
   .modal{position:fixed;inset:0;background:rgba(11,14,20,.97);z-index:5;display:none;flex-direction:column;
     padding:12px 18px;box-sizing:border-box}
-  .modal .top{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+  .modal .top{display:flex;gap:10px;align-items:center;margin-bottom:12px}
   .modal .top h3{margin:0;flex:1;font-size:17px;color:var(--acc)}
-  #q{flex:1;background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:15px;-webkit-user-select:text;user-select:text}
-  .modal .top button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:13px}
+  #q{flex:1;background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:15.5px;-webkit-user-select:text;user-select:text}
+  .modal .top button{background:#18203a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 15px;font-size:13.5px;white-space:nowrap}
 
-  /* Ikonlu Uygulama Izgarasi */
-  #applist{overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:9px;
-    align-content:start;touch-action:pan-y;padding-bottom:16px}
-  .app-item{background:#151d33;color:var(--txt);border:1px solid var(--line);border-radius:12px;
-    padding:9px 10px;font-size:13.5px;text-align:left;display:flex;align-items:center;gap:10px;
+  /* Buyutulmus Ikonlu Uygulama Izgarasi (Varsayilan: Buyuk) */
+  #applist{overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(225px,1fr));gap:12px;
+    align-content:start;touch-action:pan-y;padding-bottom:20px}
+  .app-item{background:#151d33;color:var(--txt);border:1.5px solid var(--line);border-radius:15px;
+    padding:13px 14px;font-size:15.5px;text-align:left;display:flex;align-items:center;gap:13px;
     position:relative;overflow:hidden;transition:border-color .15s,background .15s}
   .app-item:active{background:#1f2c4d;border-color:var(--acc)}
-  .app-item.recent{border-color:rgba(77,163,255,.45);background:#17223d}
-  .app-icon{width:42px;height:42px;border-radius:10px;flex-shrink:0;object-fit:contain;background:#0e1424;
-    box-shadow:0 2px 6px rgba(0,0,0,.35)}
-  .app-meta{display:flex;flex-direction:column;min-width:0;flex:1;gap:2px}
-  .app-name{font-weight:600;font-size:13.5px;color:#e3ecff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .app-pkg{font-size:10.5px;color:#6e7fa8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .app-rec-badge{font-size:9.5px;color:var(--warn);font-weight:700;letter-spacing:.3px}
+  .app-item.recent{border-color:rgba(77,163,255,.55);background:#17223d}
+  .app-icon{width:58px;height:58px;border-radius:14px;flex-shrink:0;object-fit:contain;background:#0e1424;
+    box-shadow:0 3px 8px rgba(0,0,0,.4)}
+  .app-meta{display:flex;flex-direction:column;min-width:0;flex:1;gap:4px}
+  .app-name{font-weight:700;font-size:15.5px;color:#e8f0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .app-pkg{font-size:11.5px;color:#788bb8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .app-rec-badge{font-size:11px;color:var(--warn);font-weight:700;letter-spacing:.3px}
+
+  /* Cok Buyuk (XL) Gorunum Secenegi */
+  #applist.size-xl{grid-template-columns:repeat(auto-fill,minmax(275px,1fr));gap:14px}
+  #applist.size-xl .app-item{padding:16px 16px;border-radius:17px;gap:15px}
+  #applist.size-xl .app-icon{width:72px;height:72px;border-radius:16px}
+  #applist.size-xl .app-name{font-size:17.5px}
+  #applist.size-xl .app-pkg, #applist.size-xl .app-rec-badge{font-size:12.5px}
+
+  /* Kompakt (Normal) Gorunum Secenegi */
+  #applist.size-sm{grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:9px}
+  #applist.size-sm .app-item{padding:10px 11px;border-radius:12px;gap:10px}
+  #applist.size-sm .app-icon{width:44px;height:44px;border-radius:11px}
+  #applist.size-sm .app-name{font-size:13.5px}
+  #applist.size-sm .app-pkg, #applist.size-sm .app-rec-badge{font-size:10.5px}
 
   /* Ayarlar Icerigi */
   .settings-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;touch-action:pan-y;padding-bottom:12px}
@@ -90,6 +104,7 @@
 <div id="panel" class="modal">
   <div class="top">
     <input id="q" type="search" placeholder="Uygulama veya oyun ara...">
+    <button id="appSizeBtn" title="Uygulama Kart Boyutunu Degistir">🔍 Boyut: Buyuk</button>
     <button id="closeBtn">Kapat</button>
   </div>
   <div id="applist"></div>
@@ -274,7 +289,8 @@ const DEFAULT_SETTINGS = {
   barSize: 52,
   leftStyle: 'joystick',
   steerTarget: 'analog',
-  tiltSens: 1.5
+  tiltSens: 1.5,
+  appCardSize: 'lg' // 'lg' (Buyuk - 58px) | 'xl' (Cok Buyuk - 72px) | 'sm' (Normal - 44px)
 };
 
 let CFG = Object.assign({}, DEFAULT_SETTINGS);
@@ -1670,11 +1686,34 @@ function draw(){
   }
 }
 
-/* ---------- Ikonlu Uygulama Secici + Geri ---------- */
+/* ---------- Buyutulmus Ikonlu Uygulama Secici + Geri ---------- */
 const panel = document.getElementById('panel'), applist = document.getElementById('applist');
-const q = document.getElementById('q');
+const q = document.getElementById('q'), appSizeBtn = document.getElementById('appSizeBtn');
 let APPS = null;
 const jsIconCache = new Map();
+
+const APP_SIZE_ORDER = ['lg', 'xl', 'sm'];
+const APP_SIZE_LABELS = {
+  lg: '🔍 Boyut: Buyuk',
+  xl: '🔍 Boyut: Cok Buyuk',
+  sm: '🔍 Boyut: Normal'
+};
+
+function applyAppListSize(){
+  const sz = CFG.appCardSize || 'lg';
+  applist.classList.remove('size-xl', 'size-sm');
+  if (sz === 'xl') applist.classList.add('size-xl');
+  else if (sz === 'sm') applist.classList.add('size-sm');
+  appSizeBtn.textContent = APP_SIZE_LABELS[sz] || APP_SIZE_LABELS.lg;
+}
+
+appSizeBtn.addEventListener('click', ()=>{
+  const cur = CFG.appCardSize || 'lg';
+  const next = APP_SIZE_ORDER[(APP_SIZE_ORDER.indexOf(cur) + 1) % APP_SIZE_ORDER.length];
+  CFG.appCardSize = next;
+  saveCfg();
+  applyAppListSize();
+});
 
 const PALETTE = [
   ['#2563eb','#1d4ed8'], ['#e11d48','#be123c'], ['#059669','#047857'],
@@ -1775,6 +1814,7 @@ function pushRecent(c){
 }
 
 function renderApps(){
+  applyAppListSize();
   const f = q.value.trim().toLowerCase(), rec = getRecent();
   const items = loadApps().filter(a => !f || a.n.toLowerCase().includes(f) || a.c.toLowerCase().includes(f));
   if (!f) items.sort((a,b) => {
