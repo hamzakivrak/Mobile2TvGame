@@ -28,9 +28,10 @@ object RelayMain {
     private const val BEACON_PORT = 27184
     private const val LOCAL_CTL_PORT = 27185
     private const val CURSOR_PORT = 27186
-    private const val AUDIO_PORT = 27187
+        private const val AUDIO_PORT = 27187
     private const val LOCAL_VIDEO_PORT = 27188
-    private const val TMP_JAR_PATH = "/data/local/tmp/m2t-scrcpy-server.jar"
+    private const val WEB_HTTP_PORT = 8080
+    private const val TMP_JAR_PATH = "/data/local/tmp/m2t-scrcpy-server.jar" 
 
     @Volatile
     private var displayId = -1
@@ -536,6 +537,74 @@ object RelayMain {
         System.out.flush()
     }
 
+    private fun findLocalWifiIp(): String {
+        try {
+            val ifs = NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+            for (ni in ifs) {
+                if (!ni.isUp || ni.isLoopback) continue
+                for (ia in ni.interfaceAddresses) {
+                    val addr = ia.address
+                    val host = addr?.hostAddress ?: continue
+                    if (!addr.isLoopbackAddress && host.contains('.') && !host.startsWith("169.254.")) {
+                        return host
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return "telefon-ip"
+    }
+
+    private fun startWebHttpServer() {
+        thread(isDaemon = true) {
+            try {
+                val ss = ServerSocket()
+                ss.reuseAddress = true
+                ss.bind(InetSocketAddress(WEB_HTTP_PORT))
+                val ip = findLocalWifiIp()
+                p("Web Yayini: http://$ip:$WEB_HTTP_PORT")
+                while (true) {
+                    val c = ss.accept()
+                    thread(isDaemon = true) {
+                        try {
+                            c.tcpNoDelay = true
+                            val reqLine = c.getInputStream().bufferedReader().readLine() ?: ""
+                            val out = BufferedOutputStream(c.getOutputStream(), 32768)
+                            if (reqLine.contains("GET /frame.png")) {
+                                val disp = if (displayId > 0) displayId.toString() else "0"
+                                val pr = ProcessBuilder("/system/bin/screencap", "-d", disp, "-p").start()
+                                val bytes = pr.inputStream.readBytes()
+                                pr.waitFor()
+                                val hdr = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${bytes.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+                                out.write(hdr.toByteArray())
+                                out.write(bytes)
+                                out.flush()
+                            } else {
+                                val html = """<!doctype html><html><head><meta charset="utf-8"><title>Mobile2TvGame Web TV</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}
+img{width:100vw;height:100vh;object-fit:contain}</style></head>
+<body><img id="v" src="/frame.png"><script>
+const v=document.getElementById('v');
+function next(){const i=new Image();i.onload=()=>{v.src=i.src;setTimeout(next,40);};i.onerror=()=>setTimeout(next,300);i.src='/frame.png?t='+Date.now();}
+next();
+</script></body></html>"""
+                                val body = html.toByteArray(Charsets.UTF_8)
+                                val hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${body.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+                                out.write(hdr.toByteArray())
+                                out.write(body)
+                                out.flush()
+                            }
+                        } catch (_: Exception) {
+                        } finally {
+                            try { c.close() } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                p("Web sunucu hatasi (port $WEB_HTTP_PORT): $e")
+            }
+        }
+    }
+
     private fun startBeacon(port: Int) {
         thread(isDaemon = true) {
             val msg = "M2T1:$port".toByteArray()
@@ -602,6 +671,7 @@ object RelayMain {
             startCursorServer()
             startAudioServer()
             startLocalVideoServer()
+            startWebHttpServer()
 
             val dst = TMP_JAR_PATH
             ZipFile(apk).use { z ->
