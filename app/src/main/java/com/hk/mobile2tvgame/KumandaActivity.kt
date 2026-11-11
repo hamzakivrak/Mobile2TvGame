@@ -6,6 +6,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.hardware.Sensor
@@ -17,6 +19,7 @@ import android.media.MediaFormat
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Base64
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Surface
@@ -36,6 +39,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.File
 import java.io.IOException
@@ -43,12 +47,14 @@ import java.net.HttpURLConnection
 import java.net.Socket
 import java.net.URL
 import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
 
 class KumandaActivity : Activity(), SensorEventListener {
 
     private val queue = LinkedBlockingQueue<String>()
+    private val iconCache = ConcurrentHashMap<String, String>()
     private lateinit var rootLayout: FrameLayout
     private lateinit var previewSurfaceView: SurfaceView
     private lateinit var web: WebView
@@ -191,6 +197,33 @@ class KumandaActivity : Activity(), SensorEventListener {
                     )
                 }
             return arr.toString()
+        }
+
+        @JavascriptInterface
+        fun appIcon(comp: String): String {
+            iconCache[comp]?.let { return it }
+            return try {
+                val pm = packageManager
+                val cn = ComponentName.unflattenFromString(comp)
+                val drawable = if (cn != null) {
+                    try { pm.getActivityIcon(cn) } catch (_: Exception) { pm.getApplicationIcon(cn.packageName) }
+                } else {
+                    pm.getApplicationIcon(comp.substringBefore('/'))
+                }
+                val size = 96
+                val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bmp)
+                drawable.setBounds(0, 0, size, size)
+                drawable.draw(canvas)
+                val bos = ByteArrayOutputStream(2048)
+                bmp.compress(Bitmap.CompressFormat.PNG, 90, bos)
+                bmp.recycle()
+                val dataUrl = "data:image/png;base64," + Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+                iconCache[comp] = dataUrl
+                dataUrl
+            } catch (_: Exception) {
+                ""
+            }
         }
 
         @JavascriptInterface
