@@ -49,6 +49,7 @@ import java.io.DataInputStream
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
 import java.nio.ByteBuffer
@@ -291,7 +292,7 @@ class KumandaActivity : Activity(), SensorEventListener {
                     return "no_perm"
                 }
                 if (streamProc != null) {
-                    streamStatusText = if (tvConnected) "TV Bagli (Yayin Aktif)" else "TV Bekleniyor... (TV'de uygulamayi acin)"
+                    streamStatusText = if (tvConnected) "TV Bagli (Yayin Aktif)" else "Sanal Ekran Aktif | TV Bekleniyor..."
                     pushStateToWeb()
                     return "already_running"
                 }
@@ -311,7 +312,7 @@ class KumandaActivity : Activity(), SensorEventListener {
 
                 clearLogs()
                 tvConnected = false
-                streamStatusText = "Yayin baslatildi, TV bekleniyor..."
+                streamStatusText = "Sanal ekran baslatiliyor..."
                 appendLog("Sanal ekran: $d | Uygulama: ${a.ifEmpty { "(yok)" }}")
                 pushStateToWeb()
 
@@ -322,25 +323,34 @@ class KumandaActivity : Activity(), SensorEventListener {
                             Array<String>::class.java, Array<String>::class.java, String::class.java
                         )
                         m.isAccessible = true
-                        // Onceki oturumdan kalan zombi RelayMain / scrcpy sureclerini temizle:
-                        val sh = "pkill -f com.hk.mobile2tvgame.RelayMain >/dev/null 2>&1; " +
-                                "pkill -f com.genymobile.scrcpy.Server >/dev/null 2>&1; " +
-                                "sleep 0.2; " +
-                                "export CLASSPATH='$apk'; exec /system/bin/app_process / " +
+                        // DIKKAT: sh -c icinde pkill -f RelayMain kullanma (kendi sh surecini oldurur!).
+                        // Onceki surec RelayMain icinde 27185 QUIT komutuyla temizce kapatilir.
+                        val sh = "export CLASSPATH='$apk'; exec /system/bin/app_process / " +
                                 "com.hk.mobile2tvgame.RelayMain '$apk' '$v' '$a' '$d' 27183 2>&1"
                         val p = m.invoke(null, arrayOf("sh", "-c", sh), null, null) as Process
                         streamProc = p
                         pushStateToWeb()
                         p.inputStream.bufferedReader().forEachLine { line ->
                             appendLog(line)
-                            if (line.contains("TV baglandi") || line.contains("Sanal ekran hazir") || line.contains("[akis] video boyutu")) {
-                                tvConnected = true
-                                streamStatusText = "TV Baglandi (Yayin Aktif)"
-                            } else if (line.contains("TV bekleniyor")) {
-                                tvConnected = false
-                                streamStatusText = "TV Bekleniyor... (TV'de uygulamayi acin)"
-                            } else if (line.contains("[beklemede]")) {
-                                streamStatusText = "TV Bekleniyor (Baglaninca uygulama TV'de acilacak)"
+                            when {
+                                line.contains("TV baglandi") -> {
+                                    tvConnected = true
+                                    streamStatusText = "TV Baglandi (Yayin Aktif)"
+                                }
+                                line.contains("TV baglantisi kesildi") -> {
+                                    tvConnected = false
+                                    streamStatusText = "Sanal Ekran Aktif | TV Bekleniyor..."
+                                }
+                                line.contains("Sanal ekran aktif!") || line.contains("Sanal ekran hazir") -> {
+                                    if (!tvConnected) {
+                                        streamStatusText = "Sanal Ekran Hazir (📺 Ekran Acik / TV Bekleniyor)"
+                                    }
+                                }
+                                line.contains("TV bekleniyor") -> {
+                                    if (!tvConnected) {
+                                        streamStatusText = "Sanal Ekran Aktif | TV Bekleniyor..."
+                                    }
+                                }
                             }
                             pushStateToWeb()
                         }
@@ -367,28 +377,22 @@ class KumandaActivity : Activity(), SensorEventListener {
 
         @JavascriptInterface
         fun stopStream() {
-            try { streamProc?.destroy() } catch (_: Throwable) {}
-            streamProc = null
-            tvConnected = false
+            queue.offer("QUIT\n")
             thread(isDaemon = true) {
                 try {
-                    val m = Shizuku::class.java.getDeclaredMethod(
-                        "newProcess",
-                        Array<String>::class.java, Array<String>::class.java, String::class.java
-                    )
-                    m.isAccessible = true
-                    val p = m.invoke(
-                        null,
-                        arrayOf("sh", "-c", "pkill -f com.hk.mobile2tvgame.RelayMain >/dev/null 2>&1; pkill -f com.genymobile.scrcpy.Server >/dev/null 2>&1"),
-                        null,
-                        null
-                    ) as Process
-                    p.waitFor()
+                    Socket().use { s ->
+                        s.connect(InetSocketAddress("127.0.0.1", 27185), 200)
+                        s.getOutputStream().write("QUIT\n".toByteArray())
+                        s.getOutputStream().flush()
+                    }
                 } catch (_: Throwable) {}
+                try { streamProc?.destroy() } catch (_: Throwable) {}
+                streamProc = null
+                tvConnected = false
+                streamStatusText = "Yayin durduruldu."
+                appendLog("Kullanici tarafindan durduruldu.")
+                pushStateToWeb()
             }
-            streamStatusText = "Yayin durduruldu."
-            appendLog("Kullanici tarafindan durduruldu.")
-            pushStateToWeb()
         }
 
         @JavascriptInterface
@@ -445,7 +449,6 @@ class KumandaActivity : Activity(), SensorEventListener {
         @JavascriptInterface
         fun launch(comp: String) {
             if (!comp.matches(Regex("[A-Za-z0-9_.\$/]+"))) return
-            // Eger yayin henuz baslatilmadiysa otomatik olarak bu uygulamayla yayini baslat
             if (streamProc == null) {
                 val running = try { Shizuku.pingBinder() } catch (_: Throwable) { false }
                 val granted = running && try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch (_: Throwable) { false }

@@ -14,6 +14,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
+import java.net.Socket
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -71,9 +72,19 @@ object RelayMain {
     private val audLock = Any()
 
     @Volatile
+    private var tvSocket: Socket? = null
+
+    @Volatile
+    private var tvOut: OutputStream? = null
+    private val tvWriteLock = Any()
+
+    @Volatile
     private var previewActive = false
     private val previewQueue = LinkedBlockingQueue<ByteArray>(24)
     private val previewCacheLock = Any()
+
+    @Volatile
+    private var initialHdr69: ByteArray? = null
 
     @Volatile
     private var latestSessionHdr: ByteArray? = null
@@ -85,6 +96,66 @@ object RelayMain {
     private var latestKeyPacket: ByteArray? = null
 
     private val localClients = CopyOnWriteArrayList<OutputStream>()
+
+    private fun stopPreviousRelayIfRunning() {
+        try {
+            Socket().use { s ->
+                s.connect(InetSocketAddress("127.0.0.1", LOCAL_CTL_PORT), 200)
+                s.getOutputStream().write("QUIT\n".toByteArray())
+                s.getOutputStream().flush()
+            }
+            Thread.sleep(350)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun shutdownAndExit() {
+        beacon = false
+        previewActive = false
+        try { tvSocket?.close() } catch (_: Throwable) {}
+        try { serverProc?.destroy() } catch (_: Throwable) {}
+        try { File(TMP_JAR_PATH).delete() } catch (_: Throwable) {}
+        System.exit(0)
+    }
+
+    private fun startTvVideoServer(port: Int) {
+        thread(isDaemon = true) {
+            try {
+                val ss = ServerSocket()
+                ss.reuseAddress = true
+                ss.bind(InetSocketAddress(port))
+                while (true) {
+                    val tv = ss.accept()
+                    beacon = false
+                    allowedTvIp = tv.inetAddress.hostAddress
+                    tv.tcpNoDelay = true
+                    tv.sendBufferSize = 256 * 1024
+                    p("TV baglandi: ${tv.inetAddress.hostAddress}")
+                    try { tvSocket?.close() } catch (_: Exception) {}
+                    tvSocket = tv
+                    val out = BufferedOutputStream(tv.getOutputStream(), 65536)
+                    synchronized(tvWriteLock) {
+                        try {
+                            synchronized(previewCacheLock) {
+                                initialHdr69?.let { out.write(it) }
+                                latestSessionHdr?.let { out.write(it) }
+                                latestConfigPacket?.let { out.write(it) }
+                                latestKeyPacket?.let { out.write(it) }
+                            }
+                            out.flush()
+                            tvOut = out
+                        } catch (e: Exception) {
+                            tvOut = null
+                            beacon = true
+                            try { tv.close() } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                p("TV sunucu hatasi (port $port): $e")
+            }
+        }
+    }
 
     private fun startCursorServer() {
         thread(isDaemon = true) {
@@ -248,7 +319,6 @@ object RelayMain {
     private fun detectScrcpyDisplayIdFallback(): Int {
         return try {
             val out = runCmd("/system/bin/dumpsys", "display")
-            // scrcpy sanal ekranini bul (uniqueId veya ownerPackageName shell / scrcpy)
             val m = Regex("Display Id=(\\d+)[^\\n]*scrcpy", RegexOption.IGNORE_CASE).find(out)
                 ?: Regex("mDisplayId=(\\d+)[\\s\\S]{0,300}?scrcpy", RegexOption.IGNORE_CASE).find(out)
             val id = m?.groupValues?.get(1)?.toIntOrNull() ?: -1
@@ -262,12 +332,9 @@ object RelayMain {
         val cleanTarget = target.trim()
         if (cleanTarget.isEmpty()) return
 
-        // Eger TV henuz baglanmadiysa veya sanal ekran olusmadiysa ASLA --display -1 ile calistirma!
-        // (--display -1 Android'de uygulamayi telefonun kendi ekraninda acar ve kumandadan atar!)
         if (displayId <= 0) {
-            // Eger sunucu sureci basladiysa kisa bir sure (3 sn) displayId'nin gelmesini bekle
             if (serverProc != null) {
-                val waitEnd = System.currentTimeMillis() + 3_000
+                val waitEnd = System.currentTimeMillis() + 4_000
                 while (displayId <= 0 && System.currentTimeMillis() < waitEnd) {
                     Thread.sleep(80)
                 }
@@ -278,7 +345,7 @@ object RelayMain {
             }
             if (displayId <= 0) {
                 pendingLaunchTarget = cleanTarget
-                p("[beklemede] TV sanal ekrani henuz hazir degil. '$cleanTarget' siraya alindi (TV baglaninca otomatik TV'de acilacak).")
+                p("[beklemede] Sanal ekran hazirlaniyor, '$cleanTarget' siraya alindi.")
                 return
             }
         }
@@ -307,11 +374,8 @@ object RelayMain {
             val pkg = comp.substringBefore('/').trim()
             val firstLaunchOnTv = pkg.isNotEmpty() && !launchedOnVirtualDisplay.contains(pkg)
 
-            p("Uygulama TV sanal ekraninda (id=$targetDisp) baslatiliyor: $comp")
+            p("Uygulama sanal ekranda (id=$targetDisp) baslatiliyor: $comp")
 
-            // Eger bu uygulama daha once telefonda (Display 0) acildiysa, Android onun Task'ini Display 0'da tutar.
-            // Ilk kez TV sanal ekranina tasirken --activity-clear-task kullanarak Display 0'daki Task'i kapatip
-            // sanal ekranda (targetDisp) yeni Task olusturmasi zorlanir.
             val cmd = mutableListOf(
                 "/system/bin/am", "start",
                 "--display", targetDisp.toString(),
@@ -333,25 +397,11 @@ object RelayMain {
             val out = runCmd(*cmd.toTypedArray())
             out.lines().filter { it.isNotBlank() }.forEach { p("[am] $it") }
 
-            // Eger Android "current task has been brought to the front" veya "delivered to currently running"
-            // dediyse ve uygulama baska bir ekranda (orn. Display 0) kalmissa --activity-clear-task ile zorla:
-            if (!firstLaunchOnTv && (out.contains("brought to the front", ignoreCase = true) ||
-                        out.contains("currently running", ignoreCase = true))) {
-                // KumandaActivity'nin telefon ekraninda (Display 0) en ustte kalmasini garantiye al
-                try {
-                    runCmd(
-                        "/system/bin/am", "start", "--display", "0",
-                        "--activity-single-top", "--activity-reorder-to-front",
-                        "-n", "com.hk.mobile2tvgame/.KumandaActivity"
-                    )
-                } catch (_: Exception) {}
-            }
-
             if (pkg.isNotEmpty()) {
                 launchedOnVirtualDisplay.add(pkg)
             }
 
-            // Telefon ekraninda (Display 0) her ihtimale karsi KumandaActivity'yi onde tut
+            // Telefon ekraninda (Display 0) KumandaActivity'nin her zaman en ustte kalmasini sagla
             try {
                 runCmd(
                     "/system/bin/am", "start", "--display", "0",
@@ -432,7 +482,13 @@ object RelayMain {
                             clientOut.flush()
                             c.getInputStream().bufferedReader().forEachLine { l ->
                                 try {
-                                    val t = l.trim().split(' ')
+                                    val trimmed = l.trim()
+                                    if (trimmed == "QUIT") {
+                                        p("Durdurma komutu alindi, cikiliyor...")
+                                        shutdownAndExit()
+                                        return@forEachLine
+                                    }
+                                    val t = trimmed.split(' ')
                                     when {
                                         t.size >= 5 && t[0] == "T" -> {
                                             val a = t[1].toInt()
@@ -477,21 +533,22 @@ object RelayMain {
             val msg = "M2T1:$port".toByteArray()
             val s = DatagramSocket()
             s.broadcast = true
-            while (beacon) {
-                try {
-                    val ifs = NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
-                    for (ni in ifs) {
-                        if (!ni.isUp || ni.isLoopback) continue
-                        for (ia in ni.interfaceAddresses) {
-                            val b = ia.broadcast ?: continue
-                            s.send(DatagramPacket(msg, msg.size, b, BEACON_PORT))
+            while (true) {
+                if (beacon) {
+                    try {
+                        val ifs = NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+                        for (ni in ifs) {
+                            if (!ni.isUp || ni.isLoopback) continue
+                            for (ia in ni.interfaceAddresses) {
+                                val b = ia.broadcast ?: continue
+                                s.send(DatagramPacket(msg, msg.size, b, BEACON_PORT))
+                            }
                         }
+                    } catch (_: Exception) {
                     }
-                } catch (_: Exception) {
                 }
                 try { Thread.sleep(1000) } catch (_: InterruptedException) {}
             }
-            s.close()
         }
     }
 
@@ -503,7 +560,7 @@ object RelayMain {
                 s.connect(LocalSocketAddress("scrcpy_$scid", LocalSocketAddress.Namespace.ABSTRACT))
                 return s
             } catch (_: IOException) {
-                Thread.sleep(100)
+                Thread.sleep(80)
             }
         }
         return null
@@ -530,24 +587,14 @@ object RelayMain {
                 vw = it.groupValues[1].toInt()
                 vh = it.groupValues[2].toInt()
             }
+
+            // Eger onceki oturumdan acik kalmis bir RelayMain varsa temizce kapat
+            stopPreviousRelayIfRunning()
+
             startLocalControl()
             startCursorServer()
             startAudioServer()
             startLocalVideoServer()
-
-            val ss = ServerSocket()
-            ss.reuseAddress = true
-            ss.bind(InetSocketAddress(port))
-            startBeacon(port)
-            p("TV bekleniyor (port $port)... TV uygulamasini acin.")
-            val tv = ss.accept()
-            beacon = false
-            allowedTvIp = tv.inetAddress.hostAddress
-            try { ss.close() } catch (_: Exception) {}
-            tv.tcpNoDelay = true
-            tv.sendBufferSize = 256 * 1024
-            p("TV baglandi: ${tv.inetAddress.hostAddress}")
-            val out = BufferedOutputStream(tv.getOutputStream(), 65536)
 
             val dst = TMP_JAR_PATH
             ZipFile(apk).use { z ->
@@ -568,6 +615,7 @@ object RelayMain {
                 else -> 60
             }
 
+            p("Sanal ekran baslatiliyor ($display)...")
             val scid = "%08x".format(Random.nextInt(1, 0x7fffffff))
             val cmd = listOf(
                 "/system/bin/app_process", "/", "com.genymobile.scrcpy.Server", version,
@@ -665,7 +713,6 @@ object RelayMain {
                 p("Kontrol kanali hazir.")
             }
 
-            // Yedek kontrol: eger log satiri geciktiyse veya farkli formatta ciktiysa dumpsys ile bul
             thread(isDaemon = true) {
                 val waitEnd = System.currentTimeMillis() + 8_000
                 while (displayId <= 0 && System.currentTimeMillis() < waitEnd) {
@@ -681,14 +728,19 @@ object RelayMain {
             val inp = DataInputStream(BufferedInputStream(sock.inputStream, 65536))
             val hdr = ByteArray(69)
             inp.readFully(hdr)
-            out.write(hdr)
-            out.flush()
+            synchronized(previewCacheLock) {
+                initialHdr69 = hdr.clone()
+            }
+
+            // Sanal ekran ve yerel onizleme artik hazir; simdi TV sunucusunu ve UDP beacon'i baslat
+            startTvVideoServer(port)
+            startBeacon(port)
+            p("Sanal ekran aktif! TV bekleniyor (port $port)...")
 
             val h = ByteArray(12)
             var payload = ByteArray(256 * 1024)
             var total = 69L
             var last = System.currentTimeMillis()
-            p("Yayin basladi.")
             while (true) {
                 inp.readFully(h)
                 val bb = ByteBuffer.wrap(h)
@@ -708,8 +760,19 @@ object RelayMain {
                     if (previewActive) {
                         previewQueue.offer(shCopy)
                     }
-                    out.write(h)
-                    out.flush()
+                    val currentTv = tvOut
+                    if (currentTv != null) {
+                        synchronized(tvWriteLock) {
+                            try {
+                                currentTv.write(h)
+                                currentTv.flush()
+                            } catch (_: Exception) {
+                                tvOut = null
+                                beacon = true
+                                p("TV baglantisi kesildi, TV bekleniyor...")
+                            }
+                        }
+                    }
                     total += 12
                 } else {
                     val flags = bb.getLong(0)
@@ -717,9 +780,6 @@ object RelayMain {
                     if (size < 0 || size > 8_000_000) throw IOException("gecersiz paket boyutu: $size")
                     if (size > payload.size) payload = ByteArray(size)
                     inp.readFully(payload, 0, size)
-                    out.write(h)
-                    out.write(payload, 0, size)
-                    out.flush()
                     total += 12 + size
 
                     val isConfig = (flags and (1L shl 62)) != 0L
@@ -746,6 +806,21 @@ object RelayMain {
                             }
                         }
                     }
+
+                    val currentTv = tvOut
+                    if (currentTv != null) {
+                        synchronized(tvWriteLock) {
+                            try {
+                                currentTv.write(h)
+                                currentTv.write(payload, 0, size)
+                                currentTv.flush()
+                            } catch (_: Exception) {
+                                tvOut = null
+                                beacon = true
+                                p("TV baglantisi kesildi, TV bekleniyor...")
+                            }
+                        }
+                    }
                 }
                 val now = System.currentTimeMillis()
                 if (now - last > 5000) {
@@ -758,10 +833,11 @@ object RelayMain {
         } finally {
             beacon = false
             previewActive = false
+            try { tvSocket?.close() } catch (_: Exception) {}
             try { sock?.close() } catch (_: Exception) {}
             try { audSock?.close() } catch (_: Exception) {}
             try { serverProc?.destroy() } catch (_: Exception) {}
-            try { File(TMP_JAR_PATH).delete() } catch (_: Throwable) {}
+            try { File(TMP_JAR_PATH).delete() } catch (_: Exception) {}
         }
         p("BITTI")
         System.exit(0)
