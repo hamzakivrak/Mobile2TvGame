@@ -116,10 +116,10 @@
   <button id="modeBtn">Mod: IMLEC</button>
   <button id="previewBtn">📺 Ekran</button>
   <button id="ctrlStyleBtn" style="display:none">Sol: 🕹️ Joystick</button>
-  <button id="editBtn" style="display:none">Tus Hedefi</button>
-  <button id="editDragModeBtn" style="display:none" title="Hedef Yeri veya Tus Yeri Tasi">🎯 Hedef Tasi</button>
-  <button id="quickAddCtrlBtn" style="display:none" title="Yeni Tus Ekle">➕ Tus</button>
-  <button id="quickDelCtrlBtn" style="display:none" class="exit-btn" title="Secili Tusu Sil">🗑️ Sil</button>
+  <button id="editBtn" style="display:none">📐 Tus Yeri</button>
+  <button id="editDragModeBtn" style="display:none" title="Tus Yeri ve Hedef Tasima Modu">🔗 Tus+Hedef</button>
+  <button id="quickAddCtrlBtn" style="display:none" title="Tus Sayisini Artir (Yeni Tus Ekle)">➕ Tus Ekle</button>
+  <button id="quickDelCtrlBtn" style="display:none" class="exit-btn" title="Tus Sayisini Azalt (Secili veya Son Tusu Sil)">➖ Tus Azalt</button>
   <button id="resetBtn" style="display:none">Sifirla</button>
   <button id="appBtn">Uygulamalar</button>
   <button id="setBtn">⚙ Ayarlar</button>
@@ -211,7 +211,7 @@
         <input id="chkFullArea" type="checkbox">
       </div>
       <div class="s-row">
-        <label for="chkHybridTap">KUMANDA Modunda Bos Yere Dokununca Oyuna Tikla</label>
+        <label for="chkHybridTap">KUMANDA Modunda Bos Orta Alani Imlec (Mouse) Olarak Kullan</label>
         <input id="chkHybridTap" type="checkbox">
       </div>
       <div class="s-row">
@@ -303,8 +303,12 @@
         <input id="rngScrollSpeed" type="range" min="0.6" max="3.2" step="0.2" value="1.6">
       </div>
       <div class="s-row">
-        <label>Imlec Hizi: <span id="lblCurSpeed">1.3x</span></label>
+        <label>Imlec Temel Hizi: <span id="lblCurSpeed">1.3x</span></label>
         <input id="rngCurSpeed" type="range" min="0.6" max="2.6" step="0.1" value="1.3">
+      </div>
+      <div class="s-row">
+        <label>Imlec Ivmesi (Hizli Cekiste Hizlanma): <span id="lblCurAccel">1.8x</span></label>
+        <input id="rngCurAccel" type="range" min="0" max="3.0" step="0.2" value="1.8">
       </div>
       <div class="s-row">
         <label>Cubuk Genisligi: <span id="lblBarSize">52px</span></label>
@@ -398,6 +402,7 @@ const DEFAULT_SETTINGS = {
   scrollDir: 'touch',         // Varsayilan: Dokunmatik kaydirma yonu
   scrollSpeed: 1.6,
   curSpeed: 1.3,
+  curAccel: 1.8,              // Varsayilan imlec ivmesi (hizli harekette koseye hizli ulasma)
   barSize: 52,
   leftStyle: 'joystick',
   steerTarget: 'analog',
@@ -779,7 +784,7 @@ const editBtn = document.getElementById('editBtn'), resetBtn = document.getEleme
 const editDragModeBtn = document.getElementById('editDragModeBtn');
 const quickAddCtrlBtn = document.getElementById('quickAddCtrlBtn');
 const quickDelCtrlBtn = document.getElementById('quickDelCtrlBtn');
-let editDragKind = 'target'; // 'target' = oyundaki hedefi (🎯) tasi, 'button' = ekrandaki tus dairesini tasi
+let editDragKind = 'both'; // 'both' = Tus+Hedef birlikte tasi, 'button' = Sadece Tus Yeri, 'target' = Sadece Hedef (🎯)
 let W=0, H=0, area={x:0,y:0,w:0,h:0};
 let vBarRect = null, hBarRect = null;
 
@@ -965,6 +970,12 @@ function updateWheelTouchTarget(){
   }
 }
 
+const EDIT_DRAG_LABELS = {
+  both:   '🔗 Tus+Hedef',
+  button: '🔘 Sadece Tus',
+  target: '🎯 Sadece Hedef'
+};
+
 function updateTopBar(){
   modeBtn.textContent = 'Mod: ' + mode.toUpperCase();
   previewBtn.classList.toggle('on-btn', !!CFG.showScreen);
@@ -975,12 +986,12 @@ function updateTopBar(){
     editBtn.style.display = 'inline-block';
     editDragModeBtn.style.display = editMode ? 'inline-block' : 'none';
     quickAddCtrlBtn.style.display = editMode ? 'inline-block' : 'none';
-    quickDelCtrlBtn.style.display = (editMode && selectedCtrl && selectedCtrl.tip === 'dugme') ? 'inline-block' : 'none';
+    quickDelCtrlBtn.style.display = (editMode && getActionCtrls().length > 0) ? 'inline-block' : 'none';
     resetBtn.style.display = editMode ? 'inline-block' : 'none';
     editBtn.classList.toggle('active', editMode);
-    editBtn.textContent = editMode ? '💾 Kaydet' : 'Tus Hedefi';
-    editDragModeBtn.textContent = (editDragKind === 'button') ? '🔘 Tus Yeri' : '🎯 Hedef Yeri';
-    editDragModeBtn.classList.toggle('active', editDragKind === 'button');
+    editBtn.textContent = editMode ? '💾 Kaydet' : '📐 Tus Yeri';
+    editDragModeBtn.textContent = EDIT_DRAG_LABELS[editDragKind] || EDIT_DRAG_LABELS.both;
+    editDragModeBtn.classList.toggle('active', editDragKind !== 'both');
   } else {
     editMode = false;
     selectedCtrl = null;
@@ -1218,17 +1229,74 @@ function hitGamepadControl(x, y){
   for (const c of list) {
     const dx = x - c.x*W, dy = y - c.y*H;
     const d = Math.hypot(dx, dy);
-    const grabMult = (c.tip === 'cubuk' && !editMode) ? 1.45 : 1.22;
+    const grabMult = (c.tip === 'cubuk' && !editMode) ? 1.32 : 1.18;
     if (d <= c.r * H * grabMult && d < bestDist) {
       best = c;
       bestDist = d;
     }
   }
-  if (best) return best;
-  if (!editMode && !CFG.showScreen && (CFG.leftStyle === 'joystick' || CFG.leftStyle === 'wheel') && x < W * 0.42 && y > 55) {
-    return getJoyCtrl();
+  return best;
+}
+
+function pointToSegmentDist(px, py, x1, y1, x2, y2){
+  const vx = x2 - x1, vy = y2 - y1;
+  const lenSq = vx * vx + vy * vy;
+  if (lenSq < 1) return Math.hypot(px - x1, py - y1);
+  const t = Math.max(0, Math.min(1, ((px - x1) * vx + (py - y1) * vy) / lenSq));
+  return Math.hypot(px - (x1 + t * vx), py - (y1 + t * vy));
+}
+
+// Kumanda modunda tuslarin hemen yaninda veya iki tusun arasindaki boslukta yanlislikla imlec baslamasini onler:
+function isInControlSafetyZone(x, y){
+  const list = getVisibleGamepadControls();
+  for (const c of list) {
+    const cxPos = c.x * W, cyPos = c.y * H;
+    const R = c.r * H;
+    const safetyMult = (c.tip === 'cubuk') ? 1.62 : 1.52;
+    if (Math.hypot(x - cxPos, y - cyPos) <= R * safetyMult + 18) {
+      return true;
+    }
   }
-  return null;
+  // Birbirine yakin tuslarin (orn. A-B-X-Y veya Sol-Sag-Ust-Alt oklar) arasindaki koridorlari da koru:
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const c1 = list[i], c2 = list[j];
+      const x1 = c1.x * W, y1 = c1.y * H;
+      const x2 = c2.x * W, y2 = c2.y * H;
+      const centerDist = Math.hypot(x2 - x1, y2 - y1);
+      if (centerDist < H * 0.44) {
+        const corridorR = Math.max(c1.r, c2.r) * H * 1.18 + 12;
+        if (pointToSegmentDist(x, y, x1, y1, x2, y2) <= corridorR) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// Hiza duyarli mouse/imlec ivmesi (yavas harekette hassas, hizli harekette koseye aninda ulasir):
+function computeAcceleratedCursorDelta(dx, dy, now, state){
+  const dt = Math.max(4, Math.min(65, now - (state.lastMoveAt || (now - 16))));
+  state.lastMoveAt = now;
+  const instSpeed = Math.hypot(dx, dy) / dt; // px / ms
+  state.smoothSpeed = (state.smoothSpeed === undefined) ? instSpeed : (state.smoothSpeed * 0.35 + instSpeed * 0.65);
+  const v = state.smoothSpeed;
+  const accelCfg = (typeof CFG.curAccel === 'number') ? CFG.curAccel : 1.8;
+  let accelMult = 1.0;
+  if (accelCfg > 0) {
+    if (v < 0.18) {
+      accelMult = 0.85 + (v / 0.18) * 0.15;
+    } else {
+      const boost = Math.pow(v - 0.18, 1.15) * (1.45 * accelCfg);
+      accelMult = Math.min(4.8, 1.0 + boost);
+    }
+  }
+  const sens = (CFG.curSpeed || 1.3) * accelMult;
+  return {
+    dNx: (dx / Math.max(200, area.w)) * sens,
+    dNy: (dy / Math.max(150, area.h)) * sens
+  };
 }
 
 function inRect(x, y, r){
@@ -1348,51 +1416,13 @@ function onStart(e){
       const p = pid(t);
       const state = {
         kind: 'trackpad', p,
-        sx: x, sy: y, lx: x, ly: y,
+        sx: x, sy: y, lx: x, ly: y, lastMoveAt: now, smoothSpeed: 0,
         t0: now, moved: false, dragging: false, holdTimer: null
       };
       active.set(t.identifier, state);
     }
 
-    const areaTouches = getAreaTouches(e.touches);
-    if (areaTouches.length > maxTouchesInGesture) {
-      maxTouchesInGesture = areaTouches.length;
-    }
-
-    if (CFG.twoFinger && areaTouches.length >= 2) {
-      for (const a of active.values()) {
-        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
-        if (a.dragging) { send(1, a.p, curX, curY); a.dragging = false; }
-      }
-      const t0 = areaTouches[0], t1 = areaTouches[1];
-      twoFingerPrev = {
-        x: (t0.clientX + t1.clientX) / 2,
-        y: (t0.clientY + t1.clientY) / 2,
-        sx: (t0.clientX + t1.clientX) / 2,
-        sy: (t0.clientY + t1.clientY) / 2,
-        moved: false
-      };
-      info.textContent = '2P KAYDIRMA HAZIR';
-      draw();
-      return;
-    }
-
-    if (areaTouches.length === 1 && maxTouchesInGesture === 1) {
-      const t0 = areaTouches[0];
-      const st = active.get(t0.identifier);
-      if (st && !st.holdTimer) {
-        st.holdTimer = setTimeout(() => {
-          if (maxTouchesInGesture === 1 && !st.moved && active.has(t0.identifier)) {
-            st.dragging = true;
-            send(0, st.p, curX, curY);
-            info.textContent = 'SURUKLE: ' + curX.toFixed(2) + ',' + curY.toFixed(2);
-            draw();
-          }
-        }, 420);
-      }
-      send(3, 0, curX, curY);
-      info.textContent = curX.toFixed(3) + ' , ' + curY.toFixed(3);
-    }
+    setupTrackpadGestureAfterStart(e);
     draw();
     return;
   }
@@ -1411,7 +1441,7 @@ function onStart(e){
         // Once dogrudan 🎯 hedef halkasina dokunuldu mu kontrol et
         const visList = getVisibleGamepadControls();
         let hitTargetCtrl = null;
-        let bestTDist = 34;
+        let bestTDist = 32;
         for (const vc of visList) {
           const tx = area.x + vc.oyun.x * area.w;
           const ty = area.y + vc.oyun.y * area.h;
@@ -1422,7 +1452,9 @@ function onStart(e){
           }
         }
         const c = hitGamepadControl(x,y);
-        if (hitTargetCtrl && (!c || editDragKind === 'target')) {
+        // Eger 🎯 hedef tusun uzerinden ayri bir yerdeyse ve 🎯 hedefe dokunulduysa sadece hedefi tasi:
+        const targetSeparated = hitTargetCtrl && Math.hypot(hitTargetCtrl.x * W - (area.x + hitTargetCtrl.oyun.x * area.w), hitTargetCtrl.y * H - (area.y + hitTargetCtrl.oyun.y * area.h)) > 26;
+        if (hitTargetCtrl && (targetSeparated || !c || editDragKind === 'target')) {
           selectedCtrl = hitTargetCtrl;
           active.set(t.identifier, {kind:'edit_target', c:hitTargetCtrl, lx:x, ly:y});
           send(3, 0, hitTargetCtrl.oyun.x, hitTargetCtrl.oyun.y);
@@ -1430,10 +1462,10 @@ function onStart(e){
           updateTopBar();
         } else if (c) {
           selectedCtrl = c;
-          const dragKind = (editDragKind === 'button') ? 'edit_pos' : 'edit_target';
+          const dragKind = (editDragKind === 'both') ? 'edit_both' : ((editDragKind === 'button') ? 'edit_pos' : 'edit_target');
           active.set(t.identifier, {kind: dragKind, c, lx:x, ly:y});
           send(3, 0, c.oyun.x, c.oyun.y);
-          info.textContent = (dragKind === 'edit_pos' ? '🔘 ' : '🎯 ') + c.ad;
+          info.textContent = (dragKind === 'edit_both' ? '🔗 ' : (dragKind === 'edit_pos' ? '🔘 ' : '🎯 ')) + c.ad;
           updateTopBar();
         } else if (selectedCtrl) {
           const dragKind = (editDragKind === 'button') ? 'edit_pos' : 'edit_target';
@@ -1444,11 +1476,15 @@ function onStart(e){
         const c = hitGamepadControl(x,y);
         const p = pid(t);
         if (!c) {
-          if (CFG.showScreen && CFG.hybridTap && inRect(x, y, area)) {
-            const nx = (x - area.x) / area.w, ny = (y - area.y) / area.h;
-            active.set(t.identifier, {id: t.identifier, kind:'pad', p, nx, ny});
-            send(0, p, nx, ny);
-            info.textContent = 'DOKUN: ' + nx.toFixed(2) + ',' + ny.toFixed(2);
+          // Tuslarin bulunmadigi orta bos alanda (ve tuslarin koruma mesafesinin disinda) imlec (trackpad) olarak kullan:
+          if (CFG.hybridTap && inRect(x, y, area) && !isInControlSafetyZone(x, y)) {
+            const state = {
+              kind: 'trackpad', p,
+              sx: x, sy: y, lx: x, ly: y, lastMoveAt: now, smoothSpeed: 0,
+              t0: now, moved: false, dragging: false, holdTimer: null
+            };
+            active.set(t.identifier, state);
+            setupTrackpadGestureAfterStart(e);
           }
           continue;
         }
@@ -1569,8 +1605,8 @@ function onMove(e){
     }
   }
 
-  if (mode === 'imlec') {
-    const areaTouches = getAreaTouches(e.touches);
+  const areaTouches = getAreaTouches(e.touches);
+  if (areaTouches.length > 0) {
     if (areaTouches.length > maxTouchesInGesture) {
       maxTouchesInGesture = areaTouches.length;
     }
@@ -1583,59 +1619,55 @@ function onMove(e){
         twoFingerPrev = { x: mx, y: my, sx: mx, sy: my, moved: false };
       }
       const totalDist = Math.hypot(mx - twoFingerPrev.sx, my - twoFingerPrev.sy);
-      if (!twoFingerPrev.moved && totalDist < 6) return;
-      twoFingerPrev.moved = true;
+      if (twoFingerPrev.moved || totalDist >= 6) {
+        twoFingerPrev.moved = true;
+        const dx = mx - twoFingerPrev.x;
+        const dy = my - twoFingerPrev.y;
+        twoFingerPrev.x = mx;
+        twoFingerPrev.y = my;
 
-      const dx = mx - twoFingerPrev.x;
-      const dy = my - twoFingerPrev.y;
-      twoFingerPrev.x = mx;
-      twoFingerPrev.y = my;
+        feedScrollDelta(dx / area.w, dy / area.h);
 
-      feedScrollDelta(dx / area.w, dy / area.h);
-
-      const edge = computeAreaEdgeVelocity(mx, my);
-      setEdgeAutoScroll(edge.vx, edge.vy);
-      if (edge.vx !== 0 || edge.vy !== 0) {
-        info.textContent = 'SINIR OTO KAYDIR';
-      } else {
-        info.textContent = '2P KAYDIR ⇅⇄';
+        const edge = computeAreaEdgeVelocity(mx, my);
+        setEdgeAutoScroll(edge.vx, edge.vy);
+        info.textContent = (edge.vx !== 0 || edge.vy !== 0) ? 'SINIR OTO KAYDIR' : '2P KAYDIR ⇅⇄';
       }
+    } else if (maxTouchesInGesture < 2 && now >= multiTouchEndedAt + 140) {
+      for (const t of e.changedTouches) {
+        const a = active.get(t.identifier);
+        // DIKKAT: Eger dokunus orta bosluktan 'trackpad' olarak basladiysa, parmak sonradan
+        // kumanda tuslarinin uzerine gelse bile kesintisiz imlec olarak hareket etmeye devam eder!
+        if (!a || a.kind !== 'trackpad') continue;
+        const x = t.clientX, y = t.clientY;
+        if (!a.moved && (now - a.t0) < 35 && Math.hypot(x - a.sx, y - a.sy) < 10) continue;
+
+        const dx = x - a.lx, dy = y - a.ly;
+        a.lx = x; a.ly = y;
+        if (Math.hypot(x - a.sx, y - a.sy) > 7) {
+          a.moved = true;
+          if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+        }
+        if (!a.moved) continue;
+
+        const accelDelta = computeAcceleratedCursorDelta(dx, dy, now, a);
+        curX = Math.min(1, Math.max(0, curX + accelDelta.dNx));
+        curY = Math.min(1, Math.max(0, curY + accelDelta.dNy));
+        if (a.dragging) {
+          send(2, a.p, curX, curY);
+        } else {
+          send(3, a.p, curX, curY);
+        }
+        info.textContent = curX.toFixed(3)+' , '+curY.toFixed(3);
+      }
+    }
+    if (mode === 'imlec') {
       draw();
       return;
     }
-
-    if (maxTouchesInGesture >= 2 || now < multiTouchEndedAt + 140) return;
-
-    for (const t of e.changedTouches) {
-      const a = active.get(t.identifier);
-      if (!a || a.kind !== 'trackpad') continue;
-      const x = t.clientX, y = t.clientY;
-      if (!a.moved && (now - a.t0) < 35 && Math.hypot(x - a.sx, y - a.sy) < 10) continue;
-
-      const dx = x - a.lx, dy = y - a.ly;
-      a.lx = x; a.ly = y;
-      if (Math.hypot(x - a.sx, y - a.sy) > 7) {
-        a.moved = true;
-        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
-      }
-      if (!a.moved) continue;
-
-      const sens = CFG.curSpeed;
-      curX = Math.min(1, Math.max(0, curX + (dx / area.w) * sens));
-      curY = Math.min(1, Math.max(0, curY + (dy / area.h) * sens));
-      if (a.dragging) {
-        send(2, a.p, curX, curY);
-      } else {
-        send(3, a.p, curX, curY);
-      }
-      info.textContent = curX.toFixed(3)+' , '+curY.toFixed(3);
-    }
-    draw();
-    return;
   }
 
   for (const t of e.changedTouches) {
-    const a = active.get(t.identifier); if (!a) continue;
+    const a = active.get(t.identifier); if (!a || a.kind === 'trackpad') continue;
     const x = t.clientX, y = t.clientY;
     if (a.kind === 'pad') {
       a.nx = (x-area.x)/area.w; a.ny = (y-area.y)/area.h;
@@ -1675,6 +1707,17 @@ function onMove(e){
         }
         info.textContent = 'OK: ' + hovered.ad;
       }
+    } else if (a.kind === 'edit_both') {
+      const c = a.c;
+      const dx = x - a.lx, dy = y - a.ly;
+      a.lx = x; a.ly = y;
+      c.x = Math.min(0.95, Math.max(0.05, c.x + (dx / W)));
+      c.y = Math.min(0.94, Math.max(0.08, c.y + (dy / H)));
+      c.oyun.x = Math.min(0.98, Math.max(0.02, c.oyun.x + (dx / area.w)));
+      c.oyun.y = Math.min(0.98, Math.max(0.02, c.oyun.y + (dy / area.h)));
+      saveControls();
+      send(3, 0, c.oyun.x, c.oyun.y);
+      info.textContent = '🔗 ' + c.ad + ' (' + c.x.toFixed(2) + ',' + c.y.toFixed(2) + ')';
     } else if (a.kind === 'edit_pos') {
       const c = a.c;
       const dx = x - a.lx, dy = y - a.ly;
@@ -1697,6 +1740,49 @@ function onMove(e){
   draw();
 }
 
+function setupTrackpadGestureAfterStart(e){
+  const areaTouches = getAreaTouches(e.touches);
+  if (areaTouches.length > maxTouchesInGesture) {
+    maxTouchesInGesture = areaTouches.length;
+  }
+
+  if (CFG.twoFinger && areaTouches.length >= 2) {
+    for (const a of active.values()) {
+      if (a.kind === 'trackpad') {
+        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+        if (a.dragging) { send(1, a.p, curX, curY); a.dragging = false; }
+      }
+    }
+    const t0 = areaTouches[0], t1 = areaTouches[1];
+    twoFingerPrev = {
+      x: (t0.clientX + t1.clientX) / 2,
+      y: (t0.clientY + t1.clientY) / 2,
+      sx: (t0.clientX + t1.clientX) / 2,
+      sy: (t0.clientY + t1.clientY) / 2,
+      moved: false
+    };
+    info.textContent = '2P KAYDIRMA HAZIR';
+    return;
+  }
+
+  if (areaTouches.length === 1 && maxTouchesInGesture === 1) {
+    const t0 = areaTouches[0];
+    const st = active.get(t0.identifier);
+    if (st && !st.holdTimer) {
+      st.holdTimer = setTimeout(() => {
+        if (maxTouchesInGesture === 1 && !st.moved && active.has(t0.identifier)) {
+          st.dragging = true;
+          send(0, st.p, curX, curY);
+          info.textContent = 'SURUKLE: ' + curX.toFixed(2) + ',' + curY.toFixed(2);
+          draw();
+        }
+      }, 420);
+    }
+    send(3, 0, curX, curY);
+    info.textContent = curX.toFixed(3) + ' , ' + curY.toFixed(3);
+  }
+}
+
 function onEnd(e){
   e.preventDefault();
   const now = performance.now();
@@ -1712,43 +1798,46 @@ function onEnd(e){
     }
   }
 
-  if (mode === 'imlec') {
-    for (const t of e.changedTouches) {
-      const a = active.get(t.identifier);
-      if (a && a.kind === 'trackpad') {
-        if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
-        if (a.dragging) {
-          send(1, a.p, curX, curY);
-        } else if (
-          maxTouchesInGesture === 1 &&
-          (now > multiTouchEndedAt + 150) &&
-          !a.moved &&
-          (now - a.t0) < 270
-        ) {
-          const p = a.p;
-          const tx = curX, ty = curY;
-          send(0, p, tx, ty);
-          setTimeout(() => send(1, p, tx, ty), 40);
-          info.textContent = 'TIK: ' + tx.toFixed(2) + ',' + ty.toFixed(2);
-        }
-        active.delete(t.identifier);
+  let hadTrackpadEnd = false;
+  for (const t of e.changedTouches) {
+    const a = active.get(t.identifier);
+    if (a && a.kind === 'trackpad') {
+      hadTrackpadEnd = true;
+      if (a.holdTimer) { clearTimeout(a.holdTimer); a.holdTimer = null; }
+      if (a.dragging) {
+        send(1, a.p, curX, curY);
+      } else if (
+        maxTouchesInGesture === 1 &&
+        (now > multiTouchEndedAt + 150) &&
+        !a.moved &&
+        (now - a.t0) < 270
+      ) {
+        const p = a.p;
+        const tx = curX, ty = curY;
+        send(0, p, tx, ty);
+        setTimeout(() => send(1, p, tx, ty), 40);
+        info.textContent = 'TIK: ' + tx.toFixed(2) + ',' + ty.toFixed(2);
       }
+      active.delete(t.identifier);
       idmap.delete(t.identifier);
     }
+  }
 
+  if (hadTrackpadEnd || mode === 'imlec') {
     const areaTouchesRemaining = getAreaTouches(e.touches);
     if (maxTouchesInGesture >= 2 && areaTouchesRemaining.length < 2) {
       finishScrollGesture();
       twoFingerPrev = null;
       multiTouchEndedAt = now;
     }
-
     if (areaTouchesRemaining.length === 0) {
       maxTouchesInGesture = 0;
       twoFingerPrev = null;
     }
-    draw();
-    return;
+    if (mode === 'imlec') {
+      draw();
+      return;
+    }
   }
 
   for (const t of e.changedTouches) {
@@ -1818,10 +1907,12 @@ editBtn.addEventListener('click', ()=>{
   draw();
 });
 
+const EDIT_DRAG_ORDER = ['both', 'button', 'target'];
 editDragModeBtn.addEventListener('click', ()=>{
-  editDragKind = (editDragKind === 'target') ? 'button' : 'target';
+  const idx = (EDIT_DRAG_ORDER.indexOf(editDragKind) + 1) % EDIT_DRAG_ORDER.length;
+  editDragKind = EDIT_DRAG_ORDER[idx];
   updateTopBar();
-  info.textContent = (editDragKind === 'button') ? 'TUS YERI TASIMA' : 'OYUN HEDEFI TASIMA';
+  info.textContent = EDIT_DRAG_LABELS[editDragKind];
   draw();
 });
 
@@ -1833,9 +1924,14 @@ quickAddCtrlBtn.addEventListener('click', ()=>{
 });
 
 quickDelCtrlBtn.addEventListener('click', ()=>{
-  if (selectedCtrl && selectedCtrl.tip === 'dugme') {
-    const oldName = selectedCtrl.ad;
-    removeActionButton(selectedCtrl);
+  let target = (selectedCtrl && selectedCtrl.tip === 'dugme') ? selectedCtrl : null;
+  if (!target) {
+    const acts = getActionCtrls();
+    if (acts.length > 0) target = acts[acts.length - 1];
+  }
+  if (target) {
+    const oldName = target.ad;
+    removeActionButton(target);
     info.textContent = 'Silindi: ' + oldName;
     updateTopBar();
     draw();
@@ -1917,6 +2013,8 @@ const rngScrollSpeed = document.getElementById('rngScrollSpeed');
 const lblScrollSpeed = document.getElementById('lblScrollSpeed');
 const rngCurSpeed = document.getElementById('rngCurSpeed');
 const lblCurSpeed = document.getElementById('lblCurSpeed');
+const rngCurAccel = document.getElementById('rngCurAccel');
+const lblCurAccel = document.getElementById('lblCurAccel');
 const rngBarSize = document.getElementById('rngBarSize');
 const selProfileApp = document.getElementById('selProfileApp');
 const profileStatusBadge = document.getElementById('profileStatusBadge');
@@ -2166,6 +2264,9 @@ function syncSettingsUI(){
   lblScrollSpeed.textContent = Number(CFG.scrollSpeed).toFixed(1) + 'x';
   rngCurSpeed.value = CFG.curSpeed;
   lblCurSpeed.textContent = Number(CFG.curSpeed).toFixed(1) + 'x';
+  const acc = (typeof CFG.curAccel === 'number') ? CFG.curAccel : 1.8;
+  rngCurAccel.value = acc;
+  lblCurAccel.textContent = (acc <= 0 ? 'Kapali' : Number(acc).toFixed(1) + 'x');
   rngBarSize.value = CFG.barSize;
   document.getElementById('lblBarSize').textContent = CFG.barSize + 'px';
   populateProfileAppSelect();
@@ -2202,6 +2303,7 @@ document.getElementById('closeSetBtn').addEventListener('click', ()=>{
   CFG.tiltSens = parseFloat(rngTiltSens.value);
   CFG.scrollSpeed = parseFloat(rngScrollSpeed.value);
   CFG.curSpeed = parseFloat(rngCurSpeed.value);
+  CFG.curAccel = parseFloat(rngCurAccel.value);
   CFG.barSize = parseInt(rngBarSize.value, 10);
   saveCfg();
   if (currentApp && currentApp.pkg && hasSavedProfileForPkg(currentApp.pkg)) {
@@ -2229,6 +2331,10 @@ document.getElementById('br100Btn').addEventListener('click', ()=> setPreviewBri
 rngTiltSens.addEventListener('input', ()=> lblTiltSens.textContent = Number(rngTiltSens.value).toFixed(1) + 'x');
 rngScrollSpeed.addEventListener('input', ()=> lblScrollSpeed.textContent = Number(rngScrollSpeed.value).toFixed(1) + 'x');
 rngCurSpeed.addEventListener('input', ()=> lblCurSpeed.textContent = Number(rngCurSpeed.value).toFixed(1) + 'x');
+rngCurAccel.addEventListener('input', ()=> {
+  const v = Number(rngCurAccel.value);
+  lblCurAccel.textContent = (v <= 0 ? 'Kapali' : v.toFixed(1) + 'x');
+});
 rngBarSize.addEventListener('input', ()=> document.getElementById('lblBarSize').textContent = rngBarSize.value + 'px');
 
 /* ---------- Cizim ---------- */
@@ -2411,8 +2517,16 @@ function draw(){
   // Mod: KUMANDA
 
   if (editMode) {
-    cx.fillStyle = '#ff9f43'; cx.font = 'bold 13.5px system-ui';
-    cx.fillText('AYAR MODU: Bir tusa dokunun, ardindan parmaginizi kaydirarak hedefi oyundaki tusun uzerine getirin', W/2, 50);
+    cx.fillStyle = '#ff9f43'; cx.font = 'bold 13px system-ui';
+    cx.fillText('TUS YERI & HEDEF: Tusu surukleyerek yerini degistirin | "+ Tus Ekle / - Tus Azalt" ile tus sayisini ayarlayin', W/2, 48);
+  } else if (CFG.hybridTap) {
+    // Kumanda modunda orta alandaki imleci ciz
+    const cpx = area.x + curX * area.w, cpy = area.y + curY * area.h;
+    cx.strokeStyle = scroller.down ? '#ff9f43' : 'rgba(77,163,255,0.85)';
+    cx.lineWidth = 2.2;
+    cx.beginPath(); cx.arc(cpx, cpy, 10, 0, Math.PI*2); cx.stroke();
+    cx.fillStyle = '#ffffff';
+    cx.beginPath(); cx.arc(cpx, cpy, 2.5, 0, Math.PI*2); cx.fill();
   }
 
   const vis = getVisibleGamepadControls();
@@ -2425,7 +2539,14 @@ function draw(){
     if (editMode) {
       const tx = area.x + c.oyun.x * area.w;
       const ty = area.y + c.oyun.y * area.h;
-      cx.strokeStyle = isSel ? '#2ecc71' : 'rgba(255,159,67,0.7)';
+      if (Math.hypot(tx - px, ty - py) > 12) {
+        cx.strokeStyle = isSel ? 'rgba(46,204,113,0.55)' : 'rgba(255,159,67,0.35)';
+        cx.lineWidth = 1.5;
+        cx.setLineDash([5, 5]);
+        cx.beginPath(); cx.moveTo(px, py); cx.lineTo(tx, ty); cx.stroke();
+        cx.setLineDash([]);
+      }
+      cx.strokeStyle = isSel ? '#2ecc71' : 'rgba(255,159,67,0.75)';
       cx.lineWidth = isSel ? 3 : 1.5;
       cx.beginPath(); cx.arc(tx, ty, 16, 0, Math.PI*2); cx.stroke();
       cx.fillStyle = isSel ? '#2ecc71' : '#ff9f43';
