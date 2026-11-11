@@ -11,20 +11,20 @@
     font-family:system-ui,sans-serif;color:var(--txt)}
   canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
 
-  /* Suruklenebilir Ust / Gizli Menu Cubugu */
-  #bar{position:fixed;top:4px;left:50%;transform:translateX(-50%);display:flex;gap:4px;align-items:center;z-index:3;
-    flex-wrap:nowrap;white-space:nowrap;background:rgba(11,14,20,.82);padding:3px 6px;border-radius:11px;
-    border:1px solid rgba(42,51,80,.8);box-shadow:0 3px 10px rgba(0,0,0,.45);touch-action:none}
-  #bar.custom-pos{transform:none}
-  #bar button{background:rgba(24,32,58,.92);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px}
+  /* Suruklenebilir Ust / Gizli Menu Cubugu (Asla ekrandan tasmaz, ▲ hep en solda sabit kalir) */
+  #bar{position:fixed;top:4px;left:4px;transform:none !important;max-width:calc(100vw - 8px);display:flex;gap:3px;align-items:center;z-index:3;
+    flex-wrap:wrap;justify-content:flex-start;white-space:nowrap;background:rgba(11,14,20,.88);padding:3px 5px;border-radius:11px;
+    border:1px solid rgba(42,51,80,.85);box-shadow:0 3px 10px rgba(0,0,0,.45);touch-action:none}
+  #bar.custom-pos{transform:none !important}
+  #bar button{background:rgba(24,32,58,.92);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:4px 7px;font-size:11.5px;flex-shrink:0}
   #bar button.active{border-color:var(--warn);color:var(--warn)}
   #bar button.on-btn{border-color:var(--ok);color:var(--ok);background:rgba(20,52,38,.92);font-weight:600}
   #bar button.help-btn{border-color:var(--acc);color:#fff;background:#1d3566;font-weight:600}
   #bar button.exit-btn{border-color:rgba(255,82,82,.65);color:#ff8a8a;background:rgba(60,20,26,.88);font-weight:600}
-  #minBarBtn{cursor:grab;font-weight:700;border-color:var(--acc) !important;color:#fff !important;background:#1a2b52 !important}
+  #minBarBtn{cursor:grab;font-weight:700;border-color:var(--acc) !important;color:#fff !important;background:#1a2b52 !important;flex-shrink:0}
   #bar.collapsed > *:not(#minBarBtn){display:none !important}
   #bar.collapsed{padding:2px;border-radius:10px}
-  #info{font:10.5px monospace;opacity:.85;min-width:68px;text-align:center}
+  #info{font:10.5px monospace;opacity:.85;width:78px;min-width:78px;max-width:78px;overflow:hidden;text-overflow:ellipsis;text-align:center;flex-shrink:0}
 
   /* Uygulamalar, Ayarlar ve Rehber Panelleri */
   .modal{position:fixed;inset:0;background:rgba(11,14,20,.97);z-index:5;display:none;flex-direction:column;
@@ -548,20 +548,29 @@ function doOpenShizuku(){
 const bar = document.getElementById('bar'), minBarBtn = document.getElementById('minBarBtn');
 
 function applyBarPosition(){
-  if (CFG.barX === null || CFG.barX === undefined) {
-    bar.classList.remove('custom-pos');
-    bar.style.left = '50%';
-    bar.style.top = (CFG.barY || 4) + 'px';
-    return;
-  }
   bar.classList.add('custom-pos');
-  const rect = bar.getBoundingClientRect();
-  const bw = rect.width || 60;
-  const bh = rect.height || 34;
-  const clampedX = Math.max(4, Math.min(Math.max(4, innerWidth - bw - 4), CFG.barX));
+  const maxW = Math.max(120, innerWidth - 8);
+  bar.style.maxWidth = maxW + 'px';
+  const bw = Math.min(bar.offsetWidth || 60, maxW);
+  const bh = bar.offsetHeight || 34;
+  let targetX;
+  if (CFG.barX === null || CFG.barX === undefined) {
+    targetX = Math.round((innerWidth - bw) / 2);
+  } else {
+    targetX = CFG.barX;
+  }
+  const clampedX = Math.max(4, Math.min(Math.max(4, innerWidth - bw - 4), targetX));
   const clampedY = Math.max(2, Math.min(Math.max(2, innerHeight - bh - 4), CFG.barY || 4));
   bar.style.left = clampedX + 'px';
   bar.style.top = clampedY + 'px';
+}
+
+if (typeof ResizeObserver !== 'undefined') {
+  try {
+    new ResizeObserver(() => {
+      if (!barDrag.active) applyBarPosition();
+    }).observe(bar);
+  } catch(e) {}
 }
 
 let barDrag = { active: false, moved: false, sx: 0, sy: 0, startLeft: 0, startTop: 0 };
@@ -627,15 +636,15 @@ document.getElementById('resetBarPosBtn').addEventListener('click', () => {
 
 /* ============ VARSAYILAN OYUN PROFILI ============ */
 const DEFAULT_CONTROLS = [
-  {tip:"cubuk", ad:"Yon", x:0.20, y:0.62, r:0.18, oyun:{x:0.18, y:0.72}, menzil:0.15},
-  {tip:"dugme", ad:"A",   x:0.84, y:0.66, r:0.10, oyun:{x:0.86, y:0.75}},
-  {tip:"dugme", ad:"B",   x:0.70, y:0.78, r:0.09, oyun:{x:0.74, y:0.85}},
-  {tip:"dugme", ad:"X",   x:0.72, y:0.46, r:0.08, oyun:{x:0.76, y:0.55}},
-  {tip:"dugme", ad:"Y",   x:0.86, y:0.40, r:0.08, oyun:{x:0.88, y:0.50}},
-  {tip:"yon_ok", ad:"Sol", yon:"L", x:0.11, y:0.62, r:0.085, oyun:{x:0.14, y:0.75}},
-  {tip:"yon_ok", ad:"Sag", yon:"R", x:0.29, y:0.62, r:0.085, oyun:{x:0.86, y:0.75}},
-  {tip:"yon_ok", ad:"Ust", yon:"U", x:0.20, y:0.43, r:0.085, oyun:{x:0.18, y:0.55}},
-  {tip:"yon_ok", ad:"Alt", yon:"D", x:0.20, y:0.81, r:0.085, oyun:{x:0.18, y:0.88}}
+  {tip:"cubuk", ad:"Yon", x:0.20, y:0.62, r:0.18, oyun:{x:0.20, y:0.62}, menzil:0.15},
+  {tip:"dugme", ad:"A",   x:0.84, y:0.66, r:0.10, oyun:{x:0.84, y:0.66}},
+  {tip:"dugme", ad:"B",   x:0.70, y:0.78, r:0.09, oyun:{x:0.70, y:0.78}},
+  {tip:"dugme", ad:"X",   x:0.72, y:0.46, r:0.08, oyun:{x:0.72, y:0.46}},
+  {tip:"dugme", ad:"Y",   x:0.86, y:0.40, r:0.08, oyun:{x:0.86, y:0.40}},
+  {tip:"yon_ok", ad:"Sol", yon:"L", x:0.11, y:0.62, r:0.085, oyun:{x:0.11, y:0.62}},
+  {tip:"yon_ok", ad:"Sag", yon:"R", x:0.29, y:0.62, r:0.085, oyun:{x:0.29, y:0.62}},
+  {tip:"yon_ok", ad:"Ust", yon:"U", x:0.20, y:0.43, r:0.085, oyun:{x:0.20, y:0.43}},
+  {tip:"yon_ok", ad:"Alt", yon:"D", x:0.20, y:0.81, r:0.085, oyun:{x:0.20, y:0.81}}
 ];
 
 let controls = JSON.parse(JSON.stringify(DEFAULT_CONTROLS));
@@ -1438,39 +1447,55 @@ function onStart(e){
       info.textContent = nx.toFixed(3)+' , '+ny.toFixed(3);
     } else if (mode === 'kumanda') {
       if (editMode) {
-        // Once dogrudan 🎯 hedef halkasina dokunuldu mu kontrol et
-        const visList = getVisibleGamepadControls();
-        let hitTargetCtrl = null;
-        let bestTDist = 32;
-        for (const vc of visList) {
-          const tx = area.x + vc.oyun.x * area.w;
-          const ty = area.y + vc.oyun.y * area.h;
-          const td = Math.hypot(x - tx, y - ty);
-          if (td <= bestTDist) {
-            bestTDist = td;
-            hitTargetCtrl = vc;
-          }
-        }
         const c = hitGamepadControl(x,y);
-        // Eger 🎯 hedef tusun uzerinden ayri bir yerdeyse ve 🎯 hedefe dokunulduysa sadece hedefi tasi:
-        const targetSeparated = hitTargetCtrl && Math.hypot(hitTargetCtrl.x * W - (area.x + hitTargetCtrl.oyun.x * area.w), hitTargetCtrl.y * H - (area.y + hitTargetCtrl.oyun.y * area.h)) > 26;
-        if (hitTargetCtrl && (targetSeparated || !c || editDragKind === 'target')) {
-          selectedCtrl = hitTargetCtrl;
-          active.set(t.identifier, {kind:'edit_target', c:hitTargetCtrl, lx:x, ly:y});
-          send(3, 0, hitTargetCtrl.oyun.x, hitTargetCtrl.oyun.y);
-          info.textContent = '🎯 ' + hitTargetCtrl.ad + ' -> ' + hitTargetCtrl.oyun.x.toFixed(2) + ',' + hitTargetCtrl.oyun.y.toFixed(2);
-          updateTopBar();
-        } else if (c) {
-          selectedCtrl = c;
-          const dragKind = (editDragKind === 'both') ? 'edit_both' : ((editDragKind === 'button') ? 'edit_pos' : 'edit_target');
-          active.set(t.identifier, {kind: dragKind, c, lx:x, ly:y});
-          send(3, 0, c.oyun.x, c.oyun.y);
-          info.textContent = (dragKind === 'edit_both' ? '🔗 ' : (dragKind === 'edit_pos' ? '🔘 ' : '🎯 ')) + c.ad;
-          updateTopBar();
-        } else if (selectedCtrl) {
-          const dragKind = (editDragKind === 'button') ? 'edit_pos' : 'edit_target';
-          active.set(t.identifier, {kind: dragKind, c:selectedCtrl, lx:x, ly:y});
-          send(3, 0, selectedCtrl.oyun.x, selectedCtrl.oyun.y);
+        if (editDragKind === 'both') {
+          // 🔗 Tus+Hedef seciliyken: Hedef bagimsiz oynatilamaz, tus nereye giderse hedef tam altina kilitlenir!
+          const targetCtrl = c || selectedCtrl;
+          if (targetCtrl) {
+            selectedCtrl = targetCtrl;
+            if (c) {
+              // Tusa dokunuldugunda hedefi tam tusun merkezine esitle
+              const px = targetCtrl.x * W, py = targetCtrl.y * H;
+              targetCtrl.oyun.x = Math.min(0.98, Math.max(0.02, (px - area.x) / area.w));
+              targetCtrl.oyun.y = Math.min(0.98, Math.max(0.02, (py - area.y) / area.h));
+              saveControls();
+            }
+            active.set(t.identifier, {kind: 'edit_both', c: targetCtrl, lx: x, ly: y});
+            send(3, 0, targetCtrl.oyun.x, targetCtrl.oyun.y);
+            info.textContent = '🔗 ' + targetCtrl.ad;
+            updateTopBar();
+          }
+        } else if (editDragKind === 'button') {
+          // 🔘 Sadece Tus Yeri seciliyken: Sadece tusun ekrandaki yeri tasinir
+          const targetCtrl = c || selectedCtrl;
+          if (targetCtrl) {
+            selectedCtrl = targetCtrl;
+            active.set(t.identifier, {kind: 'edit_pos', c: targetCtrl, lx: x, ly: y});
+            info.textContent = '🔘 ' + targetCtrl.ad;
+            updateTopBar();
+          }
+        } else {
+          // 🎯 Sadece Hedef seciliyken: Tusun yeri sabit kalir, sadece oyundaki 🎯 hedefi tasinir
+          const visList = getVisibleGamepadControls();
+          let hitTargetCtrl = null;
+          let bestTDist = 36;
+          for (const vc of visList) {
+            const tx = area.x + vc.oyun.x * area.w;
+            const ty = area.y + vc.oyun.y * area.h;
+            const td = Math.hypot(x - tx, y - ty);
+            if (td <= bestTDist) {
+              bestTDist = td;
+              hitTargetCtrl = vc;
+            }
+          }
+          const targetCtrl = hitTargetCtrl || c || selectedCtrl;
+          if (targetCtrl) {
+            selectedCtrl = targetCtrl;
+            active.set(t.identifier, {kind: 'edit_target', c: targetCtrl, lx: x, ly: y});
+            send(3, 0, targetCtrl.oyun.x, targetCtrl.oyun.y);
+            info.textContent = '🎯 ' + targetCtrl.ad;
+            updateTopBar();
+          }
         }
       } else {
         const c = hitGamepadControl(x,y);
@@ -1713,8 +1738,10 @@ function onMove(e){
       a.lx = x; a.ly = y;
       c.x = Math.min(0.95, Math.max(0.05, c.x + (dx / W)));
       c.y = Math.min(0.94, Math.max(0.08, c.y + (dy / H)));
-      c.oyun.x = Math.min(0.98, Math.max(0.02, c.oyun.x + (dx / area.w)));
-      c.oyun.y = Math.min(0.98, Math.max(0.02, c.oyun.y + (dy / area.h)));
+      // Hedef her zaman tam olarak tusun merkezine kilitlenir (tus nereye hedef oraya):
+      const px = c.x * W, py = c.y * H;
+      c.oyun.x = Math.min(0.98, Math.max(0.02, (px - area.x) / area.w));
+      c.oyun.y = Math.min(0.98, Math.max(0.02, (py - area.y) / area.h));
       saveControls();
       send(3, 0, c.oyun.x, c.oyun.y);
       info.textContent = '🔗 ' + c.ad + ' (' + c.x.toFixed(2) + ',' + c.y.toFixed(2) + ')';
@@ -1911,6 +1938,14 @@ const EDIT_DRAG_ORDER = ['both', 'button', 'target'];
 editDragModeBtn.addEventListener('click', ()=>{
   const idx = (EDIT_DRAG_ORDER.indexOf(editDragKind) + 1) % EDIT_DRAG_ORDER.length;
   editDragKind = EDIT_DRAG_ORDER[idx];
+  if (editDragKind === 'both' && area.w > 0 && area.h > 0) {
+    for (const c of controls) {
+      const px = c.x * W, py = c.y * H;
+      c.oyun.x = Math.min(0.98, Math.max(0.02, (px - area.x) / area.w));
+      c.oyun.y = Math.min(0.98, Math.max(0.02, (py - area.y) / area.h));
+    }
+    saveControls();
+  }
   updateTopBar();
   info.textContent = EDIT_DRAG_LABELS[editDragKind];
   draw();
