@@ -684,11 +684,11 @@ object RelayMain {
                 }
                 var s: Socket? = null
                 var codec: MediaCodec? = null
-                @Volatile var decActive = true
+                val decActive = java.util.concurrent.atomic.AtomicBoolean(true)
                 var outThread: Thread? = null
 
                 fun startDecoder(w: Int, ht: Int) {
-                    decActive = false
+                    decActive.set(false)
                     try { outThread?.join(250) } catch (_: Exception) {}
                     try { codec?.stop() } catch (_: Exception) {}
                     try { codec?.release() } catch (_: Exception) {}
@@ -702,7 +702,7 @@ object RelayMain {
                     c.configure(fmt, null, null, 0)
                     c.start()
                     codec = c
-                    decActive = true
+                    decActive.set(true)
 
                     // AYRI CIKTI THREAD'I: MediaCodec asenkron calistigi icin son kare dahil
                     // her cozulen kareyi aninda JPEG'e cevirir ve donmayi %100 engeller!
@@ -711,7 +711,7 @@ object RelayMain {
                         var nv21Buf = ByteArray(w * ht * 3 / 2)
                         val bos = ByteArrayOutputStream(98304)
                         var lastJpegMs = 0L
-                        while (decActive && webClientCount > 0) {
+                        while (decActive.get() && webClientCount > 0) {
                             try {
                                 val outIdx = c.dequeueOutputBuffer(info, 15_000)
                                 if (outIdx >= 0) {
@@ -740,7 +740,7 @@ object RelayMain {
                                     c.releaseOutputBuffer(outIdx, false)
                                 }
                             } catch (_: Exception) {
-                                if (!decActive) break
+                                if (!decActive.get()) break
                             }
                         }
                     }
@@ -795,7 +795,7 @@ object RelayMain {
                 } catch (_: Exception) {
                     try { Thread.sleep(250) } catch (_: InterruptedException) {}
                 } finally {
-                    decActive = false
+                    decActive.set(false)
                     try { s?.close() } catch (_: Exception) {}
                     try { outThread?.join(250) } catch (_: Exception) {}
                     try { codec?.stop() } catch (_: Exception) {}
@@ -1243,6 +1243,8 @@ object RelayMain {
                             gopPackets.add(pkt)
                         } else if (gopPackets.size < 90) {
                             gopPackets.add(pkt)
+                        } else {
+                            Unit
                         }
                     }
 
