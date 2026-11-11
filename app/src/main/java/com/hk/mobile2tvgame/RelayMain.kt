@@ -5,17 +5,18 @@ import android.graphics.Rect
 import android.graphics.YuvImage
 import android.media.Image
 import android.media.MediaCodec
+import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
-import java.io.ByteArrayOutputStream
-import java.io.PushbackInputStream
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
+import java.io.PushbackInputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -27,6 +28,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import kotlin.concurrent.thread
 import kotlin.random.Random
@@ -36,10 +38,10 @@ object RelayMain {
     private const val BEACON_PORT = 27184
     private const val LOCAL_CTL_PORT = 27185
     private const val CURSOR_PORT = 27186
-        private const val AUDIO_PORT = 27187
+    private const val AUDIO_PORT = 27187
     private const val LOCAL_VIDEO_PORT = 27188
     private const val WEB_HTTP_PORT = 8080
-    private const val TMP_JAR_PATH = "/data/local/tmp/m2t-scrcpy-server.jar" 
+    private const val TMP_JAR_PATH = "/data/local/tmp/m2t-scrcpy-server.jar"
 
     @Volatile
     private var displayId = -1
@@ -77,6 +79,15 @@ object RelayMain {
     private val curQueue = LinkedBlockingQueue<String>(64)
 
     @Volatile
+    private var lastCurX = 0.5
+
+    @Volatile
+    private var lastCurY = 0.5
+
+    @Volatile
+    private var lastCurAction = 3
+
+    @Volatile
     private var audOut: OutputStream? = null
     private val audLock = Any()
 
@@ -87,9 +98,9 @@ object RelayMain {
     private var tvOut: OutputStream? = null
     private val tvWriteLock = Any()
 
-    @Volatile
-    private var previewActive = false
-    private val previewQueue = LinkedBlockingQueue<ByteArray>(24)
+    // Her onizleme istemcisi (📺 Ekran ve Web Decoder) icin AYRI kuyruk:
+    // boylece istemciler birbirinin H.264 paketlerini calmaz ve goruntu asla bozulmaz!
+    private val previewClientQueues = CopyOnWriteArrayList<LinkedBlockingQueue<ByteArray>>()
     private val previewCacheLock = Any()
 
     @Volatile
@@ -101,10 +112,47 @@ object RelayMain {
     @Volatile
     private var latestConfigPacket: ByteArray? = null
 
-    @Volatile
-    private var latestKeyPacket: ByteArray? = null
+    // Son IDR Keyframe + o Keyframe'den sonraki P-frame'lerin tam listesi (GOP):
+    // Yeni baglanan istemciye GOP'un tamami gonderilir ki pikseller asla birbirine girmesin!
+    private val gopPackets = ArrayList<ByteArray>(90)
 
     private val localClients = CopyOnWriteArrayList<OutputStream>()
+
+    @Volatile
+    private var webClientCount = 0
+
+    @Volatile
+    private var latestJpegFrame: ByteArray? = null
+    private val jpegNotifyLock = Object()
+
+    // H.264 Annex-B paket iceriginden SPS/PPS (tip 7/8) veya IDR Keyframe (tip 5) tespiti:
+    private fun inspectH264Payload(buf: ByteArray, size: Int): Pair<Boolean, Boolean> {
+        var hasConfig = false
+        var hasIdr = false
+        val limit = minOf(size - 4, 256)
+        var i = 0
+        while (i < limit) {
+            if (buf[i].toInt() == 0 && buf[i + 1].toInt() == 0) {
+                val nalIdx = when {
+                    buf[i + 2].toInt() == 1 -> i + 3
+                    buf[i + 2].toInt() == 0 && buf[i + 3].toInt() == 1 -> i + 4
+                    else -> -1
+                }
+                if (nalIdx in 0 until size) {
+                    val nalType = buf[nalIdx].toInt() and 0x1F
+                    if (nalType == 7 || nalType == 8) hasConfig = true
+                    if (nalType == 5) {
+                        hasIdr = true
+                        break
+                    }
+                    i = nalIdx
+                    continue
+                }
+            }
+            i++
+        }
+        return Pair(hasConfig, hasIdr)
+    }
 
     private fun stopPreviousRelayIfRunning() {
         try {
@@ -120,7 +168,7 @@ object RelayMain {
 
     private fun shutdownAndExit() {
         beacon = false
-        previewActive = false
+        previewClientQueues.clear()
         try { tvSocket?.close() } catch (_: Throwable) {}
         try { serverProc?.destroy() } catch (_: Throwable) {}
         try { File(TMP_JAR_PATH).delete() } catch (_: Throwable) {}
@@ -149,11 +197,13 @@ object RelayMain {
                                 initialHdr69?.let { out.write(it) }
                                 latestSessionHdr?.let { out.write(it) }
                                 latestConfigPacket?.let { out.write(it) }
-                                latestKeyPacket?.let { out.write(it) }
+                                for (pkt in gopPackets) {
+                                    out.write(pkt)
+                                }
                             }
                             out.flush()
                             tvOut = out
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                             tvOut = null
                             beacon = true
                             try { tv.close() } catch (_: Exception) {}
@@ -234,15 +284,15 @@ object RelayMain {
             try {
                 val ss = ServerSocket()
                 ss.reuseAddress = true
-                ss.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), LOCAL_VIDEO_PORT), 2)
+                ss.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), LOCAL_VIDEO_PORT), 6)
                 while (true) {
                     val c = ss.accept()
                     thread(isDaemon = true) {
+                        val clientQueue = LinkedBlockingQueue<ByteArray>(90)
                         try {
                             c.tcpNoDelay = true
-                            c.sendBufferSize = 128 * 1024
-                            val out = BufferedOutputStream(c.getOutputStream(), 32768)
-                            previewQueue.clear()
+                            c.sendBufferSize = 256 * 1024
+                            val out = BufferedOutputStream(c.getOutputStream(), 65536)
                             synchronized(previewCacheLock) {
                                 val sh = latestSessionHdr ?: ByteBuffer.allocate(12).apply {
                                     put(0, 0x80.toByte())
@@ -251,23 +301,24 @@ object RelayMain {
                                 }.array()
                                 out.write(sh)
                                 latestConfigPacket?.let { out.write(it) }
-                                latestKeyPacket?.let { out.write(it) }
+                                for (pkt in gopPackets) {
+                                    out.write(pkt)
+                                }
                                 out.flush()
+                                previewClientQueues.add(clientQueue)
                             }
-                            previewActive = true
-                            while (previewActive && !c.isClosed) {
-                                val pkt = previewQueue.take()
+                            while (!c.isClosed) {
+                                val pkt = clientQueue.take()
                                 out.write(pkt)
                                 while (true) {
-                                    val next = previewQueue.poll() ?: break
+                                    val next = clientQueue.poll() ?: break
                                     out.write(next)
                                 }
                                 out.flush()
                             }
                         } catch (_: Exception) {
                         } finally {
-                            previewActive = false
-                            previewQueue.clear()
+                            previewClientQueues.remove(clientQueue)
                             try { c.close() } catch (_: Exception) {}
                         }
                     }
@@ -279,6 +330,9 @@ object RelayMain {
     }
 
     private fun sendCursor(action: Int, id: Int, nx: Double, ny: Double) {
+        lastCurX = nx.coerceIn(0.0, 1.0)
+        lastCurY = ny.coerceIn(0.0, 1.0)
+        lastCurAction = action
         if (curOut == null) return
         val line = "C $id $action $nx $ny\n"
         if (!curQueue.offer(line)) {
@@ -398,8 +452,6 @@ object RelayMain {
                 }
             }
 
-            // Eger bu uygulama daha once telefonun kendi ekraninda (Display 0) acik kaldiysa,
-            // ilk kez sanal ekrana tasirken onceki Display 0 gorevini kapat ki sanal ekranda acilsin:
             if (firstLaunchOnTv && pkg != "com.hk.mobile2tvgame" && pkg != "moe.shizuku.privileged.api") {
                 try {
                     runCmd("/system/bin/am", "force-stop", pkg)
@@ -562,13 +614,6 @@ object RelayMain {
         return "telefon-ip"
     }
 
-    @Volatile
-    private var webClientCount = 0
-
-    @Volatile
-    private var latestJpegFrame: ByteArray? = null
-    private val jpegNotifyLock = Object()
-
     private fun imageToNv21(image: Image, width: Int, height: Int, outBuf: ByteArray): ByteArray {
         val needed = width * height * 3 / 2
         val nv21 = if (outBuf.size >= needed) outBuf else ByteArray(needed)
@@ -590,6 +635,7 @@ object RelayMain {
         } else {
             val row = ByteArray(yRowStride)
             for (r in 0 until height) {
+                yBuf.position(r * yRowStride)
                 val toRead = minOf(yRowStride, yBuf.remaining())
                 yBuf.get(row, 0, toRead)
                 if (yPixelStride == 1) {
@@ -603,19 +649,23 @@ object RelayMain {
             }
         }
 
-        val uvRowStride = vPlane.rowStride
-        val uvPixelStride = vPlane.pixelStride
+        val vRowStride = vPlane.rowStride
+        val vPixelStride = vPlane.pixelStride
+        val uRowStride = uPlane.rowStride
+        val uPixelStride = uPlane.pixelStride
         val uvHeight = height / 2
         val uvWidth = width / 2
+        val vLimit = vBuf.limit()
+        val uLimit = uBuf.limit()
 
         for (r in 0 until uvHeight) {
-            val vRowStart = r * uvRowStride
-            val uRowStart = r * uPlane.rowStride
+            val vRowStart = r * vRowStride
+            val uRowStart = r * uRowStride
             for (c in 0 until uvWidth) {
-                val vIdx = vRowStart + c * uvPixelStride
-                val uIdx = uRowStart + c * uPlane.pixelStride
-                nv21[pos++] = if (vIdx < vBuf.limit()) vBuf.get(vIdx) else 128.toByte()
-                nv21[pos++] = if (uIdx < uBuf.limit()) uBuf.get(uIdx) else 128.toByte()
+                val vIdx = vRowStart + c * vPixelStride
+                val uIdx = uRowStart + c * uPixelStride
+                nv21[pos++] = if (vIdx < vLimit) vBuf.get(vIdx) else 128.toByte()
+                nv21[pos++] = if (uIdx < uLimit) uBuf.get(uIdx) else 128.toByte()
             }
         }
         return nv21
@@ -626,41 +676,84 @@ object RelayMain {
             val h = ByteArray(12)
             val bb = ByteBuffer.wrap(h)
             var payload = ByteArray(256 * 1024)
-            var nv21Buf = ByteArray(1920 * 1080 * 3 / 2)
-            val bos = ByteArrayOutputStream(65536)
 
             while (true) {
                 if (webClientCount <= 0) {
-                    try { Thread.sleep(200) } catch (_: InterruptedException) {}
+                    try { Thread.sleep(150) } catch (_: InterruptedException) {}
                     continue
                 }
                 var s: Socket? = null
                 var codec: MediaCodec? = null
+                @Volatile var decActive = true
+                var outThread: Thread? = null
+
+                fun startDecoder(w: Int, ht: Int) {
+                    decActive = false
+                    try { outThread?.join(250) } catch (_: Exception) {}
+                    try { codec?.stop() } catch (_: Exception) {}
+                    try { codec?.release() } catch (_: Exception) {}
+
+                    val c = MediaCodec.createDecoderByType("video/avc")
+                    val fmt = MediaFormat.createVideoFormat("video/avc", w, ht)
+                    fmt.setInteger(
+                        MediaFormat.KEY_COLOR_FORMAT,
+                        MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
+                    )
+                    c.configure(fmt, null, null, 0)
+                    c.start()
+                    codec = c
+                    decActive = true
+
+                    // AYRI CIKTI THREAD'I: MediaCodec asenkron calistigi icin son kare dahil
+                    // her cozulen kareyi aninda JPEG'e cevirir ve donmayi %100 engeller!
+                    outThread = thread(isDaemon = true) {
+                        val info = MediaCodec.BufferInfo()
+                        var nv21Buf = ByteArray(w * ht * 3 / 2)
+                        val bos = ByteArrayOutputStream(98304)
+                        var lastJpegMs = 0L
+                        while (decActive && webClientCount > 0) {
+                            try {
+                                val outIdx = c.dequeueOutputBuffer(info, 15_000)
+                                if (outIdx >= 0) {
+                                    val now = System.currentTimeMillis()
+                                    val encodeNow = (info.size > 0) && ((now - lastJpegMs) >= 33L || latestJpegFrame == null)
+                                    if (encodeNow) {
+                                        val img = c.getOutputImage(outIdx)
+                                        if (img != null) {
+                                            try {
+                                                val iw = img.width
+                                                val ih = img.height
+                                                nv21Buf = imageToNv21(img, iw, ih, nv21Buf)
+                                                bos.reset()
+                                                YuvImage(nv21Buf, ImageFormat.NV21, iw, ih, null)
+                                                    .compressToJpeg(Rect(0, 0, iw, ih), 75, bos)
+                                                latestJpegFrame = bos.toByteArray()
+                                                lastJpegMs = now
+                                                synchronized(jpegNotifyLock) {
+                                                    jpegNotifyLock.notifyAll()
+                                                }
+                                            } finally {
+                                                img.close()
+                                            }
+                                        }
+                                    }
+                                    c.releaseOutputBuffer(outIdx, false)
+                                }
+                            } catch (_: Exception) {
+                                if (!decActive) break
+                            }
+                        }
+                    }
+                }
+
                 try {
                     s = Socket("127.0.0.1", LOCAL_VIDEO_PORT).also {
                         it.tcpNoDelay = true
-                        it.receiveBufferSize = 128 * 1024
+                        it.receiveBufferSize = 256 * 1024
                     }
-                    val inp = DataInputStream(BufferedInputStream(s.getInputStream(), 32768))
-                    var decW = vw
-                    var decH = vh
-
-                    fun initCodec(w: Int, h: Int): MediaCodec {
-                        try { codec?.stop() } catch (_: Exception) {}
-                        try { codec?.release() } catch (_: Exception) {}
-                        val c = MediaCodec.createDecoderByType("video/avc")
-                        val fmt = MediaFormat.createVideoFormat("video/avc", w, h)
-                        fmt.setInteger(
-                            MediaFormat.KEY_COLOR_FORMAT,
-                            android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
-                        )
-                        c.configure(fmt, null, null, 0)
-                        c.start()
-                        return c
-                    }
-
-                    val info = MediaCodec.BufferInfo()
-                    var lastJpegTime = 0L
+                    val inp = DataInputStream(BufferedInputStream(s.getInputStream(), 65536))
+                    var curW = vw
+                    var curH = vh
 
                     while (webClientCount > 0) {
                         inp.readFully(h)
@@ -668,9 +761,9 @@ object RelayMain {
                             val w = bb.getInt(4)
                             val ht = bb.getInt(8)
                             if (w > 0 && ht > 0) {
-                                decW = w
-                                decH = ht
-                                codec = initCodec(decW, decH)
+                                curW = w
+                                curH = ht
+                                startDecoder(curW, curH)
                             }
                         } else {
                             val flags = bb.getLong(0)
@@ -678,13 +771,14 @@ object RelayMain {
                             if (size < 0 || size > 8_000_000) break
                             if (size > payload.size) payload = ByteArray(size)
                             inp.readFully(payload, 0, size)
-                            val config = (flags and (1L shl 62)) != 0L
-                            val pts = flags and ((1L shl 61) - 1)
                             if (codec == null) {
-                                codec = initCodec(decW, decH)
+                                startDecoder(curW, curH)
                             }
-                            val c = codec!!
-                            val inIdx = c.dequeueInputBuffer(30_000)
+                            val (nalCfg, _) = inspectH264Payload(payload, size)
+                            val isConfig = nalCfg || ((flags and (1L shl 62)) != 0L) || ((flags and (1L shl 63)) != 0L)
+                            val pts = flags and ((1L shl 61) - 1)
+                            val c = codec ?: continue
+                            val inIdx = c.dequeueInputBuffer(50_000)
                             if (inIdx >= 0) {
                                 val inBuf = c.getInputBuffer(inIdx)
                                 if (inBuf != null) {
@@ -692,42 +786,18 @@ object RelayMain {
                                     inBuf.put(payload, 0, size)
                                     c.queueInputBuffer(
                                         inIdx, 0, size, pts,
-                                        if (config) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0
+                                        if (isConfig) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0
                                     )
                                 }
-                            }
-                            var outIdx = c.dequeueOutputBuffer(info, 0)
-                            while (outIdx >= 0) {
-                                val now = System.currentTimeMillis()
-                                val shouldEncodeJpeg = (now - lastJpegTime) >= 38L
-                                if (shouldEncodeJpeg && info.size > 0) {
-                                    try {
-                                        val img = c.getOutputImage(outIdx)
-                                        if (img != null) {
-                                            val imgW = img.width
-                                            val imgH = img.height
-                                            nv21Buf = imageToNv21(img, imgW, imgH, nv21Buf)
-                                            img.close()
-                                            bos.reset()
-                                            val yuv = YuvImage(nv21Buf, ImageFormat.NV21, imgW, imgH, null)
-                                            yuv.compressToJpeg(Rect(0, 0, imgW, imgH), 62, bos)
-                                            latestJpegFrame = bos.toByteArray()
-                                            lastJpegTime = now
-                                            synchronized(jpegNotifyLock) {
-                                                jpegNotifyLock.notifyAll()
-                                            }
-                                        }
-                                    } catch (_: Exception) {}
-                                }
-                                c.releaseOutputBuffer(outIdx, false)
-                                outIdx = c.dequeueOutputBuffer(info, 0)
                             }
                         }
                     }
                 } catch (_: Exception) {
-                    try { Thread.sleep(300) } catch (_: InterruptedException) {}
+                    try { Thread.sleep(250) } catch (_: InterruptedException) {}
                 } finally {
+                    decActive = false
                     try { s?.close() } catch (_: Exception) {}
+                    try { outThread?.join(250) } catch (_: Exception) {}
                     try { codec?.stop() } catch (_: Exception) {}
                     try { codec?.release() } catch (_: Exception) {}
                 }
@@ -752,13 +822,7 @@ object RelayMain {
                             c.soTimeout = 10_000
                             val pbIn = PushbackInputStream(c.getInputStream(), 4)
                             val firstByte = pbIn.read()
-                            if (firstByte < 0) {
-                                try { c.close() } catch (_: Exception) {}
-                                return@thread
-                            }
-                            // Chrome HTTPS-First Modu once TLS ClientHello (0x16) gonderir;
-                            // aninda kapat ki Chrome 1ms icinde takilmadan HTTP'ye gecsin!
-                            if (firstByte == 0x16) {
+                            if (firstByte < 0 || firstByte == 0x16) {
                                 try { c.close() } catch (_: Exception) {}
                                 return@thread
                             }
@@ -766,66 +830,89 @@ object RelayMain {
 
                             val reader = pbIn.bufferedReader(Charsets.UTF_8)
                             val reqLine = reader.readLine() ?: ""
-                            // TCP RST hatasi olusmamasi icin tum HTTP istek basliklarini (bos satira kadar) oku:
                             while (true) {
                                 val hLine = reader.readLine() ?: break
                                 if (hLine.isEmpty()) break
                             }
 
-                            val out = BufferedOutputStream(c.getOutputStream(), 32768)
-                            if (reqLine.contains("GET /stream.mjpg")) {
-                                c.soTimeout = 0
-                                webClientCount++
-                                try {
-                                    val hdr = "HTTP/1.1 200 OK\r\n" +
-                                            "Content-Type: multipart/x-mixed-replace; boundary=m2tframe\r\n" +
-                                            "Cache-Control: no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0\r\n" +
-                                            "Pragma: no-cache\r\n" +
-                                            "Connection: close\r\n\r\n"
+                            val out = BufferedOutputStream(c.getOutputStream(), 65536)
+                            when {
+                                reqLine.contains("GET /stream.mjpg") -> {
+                                    c.soTimeout = 0
+                                    webClientCount++
+                                    try {
+                                        val hdr = "HTTP/1.1 200 OK\r\n" +
+                                                "Content-Type: multipart/x-mixed-replace; boundary=m2tframe\r\n" +
+                                                "Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n" +
+                                                "Pragma: no-cache\r\n" +
+                                                "Connection: close\r\n\r\n"
+                                        out.write(hdr.toByteArray(Charsets.UTF_8))
+                                        out.flush()
+                                        var lastSent: ByteArray? = null
+                                        var lastSentTime = 0L
+                                        while (!c.isClosed) {
+                                            var jpg = latestJpegFrame
+                                            val now = System.currentTimeMillis()
+                                            // Ekran sabit dursa bile tarayici baglantisini canli tutmak icin 400ms'de bir son kareyi yenile:
+                                            if (jpg == null || (jpg === lastSent && (now - lastSentTime) < 400L)) {
+                                                synchronized(jpegNotifyLock) {
+                                                    try { jpegNotifyLock.wait(200) } catch (_: InterruptedException) {}
+                                                }
+                                                jpg = latestJpegFrame
+                                            }
+                                            val now2 = System.currentTimeMillis()
+                                            if (jpg != null && (jpg !== lastSent || (now2 - lastSentTime) >= 400L)) {
+                                                lastSent = jpg
+                                                lastSentTime = now2
+                                                val partHdr = "--m2tframe\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpg.size}\r\n\r\n"
+                                                out.write(partHdr.toByteArray(Charsets.UTF_8))
+                                                out.write(jpg)
+                                                out.write("\r\n".toByteArray(Charsets.UTF_8))
+                                                out.flush()
+                                            }
+                                        }
+                                    } finally {
+                                        webClientCount = (webClientCount - 1).coerceAtLeast(0)
+                                    }
+                                }
+                                reqLine.contains("GET /cursor") -> {
+                                    val body = "{\"x\":$lastCurX,\"y\":$lastCurY,\"a\":$lastCurAction}".toByteArray(Charsets.UTF_8)
+                                    val hdr = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+                                    out.write(hdr.toByteArray(Charsets.UTF_8))
+                                    out.write(body)
+                                    out.flush()
+                                }
+                                reqLine.contains("GET /favicon.ico") -> {
+                                    val hdr = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
                                     out.write(hdr.toByteArray(Charsets.UTF_8))
                                     out.flush()
-                                    var lastSent: ByteArray? = null
-                                    while (!c.isClosed) {
-                                        var jpg = latestJpegFrame
-                                        if (jpg == null || jpg === lastSent) {
-                                            synchronized(jpegNotifyLock) {
-                                                try { jpegNotifyLock.wait(250) } catch (_: InterruptedException) {}
-                                            }
-                                            jpg = latestJpegFrame
-                                        }
-                                        if (jpg != null && jpg !== lastSent) {
-                                            lastSent = jpg
-                                            val partHdr = "--m2tframe\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpg.size}\r\n\r\n"
-                                            out.write(partHdr.toByteArray(Charsets.UTF_8))
-                                            out.write(jpg)
-                                            out.write("\r\n".toByteArray(Charsets.UTF_8))
-                                            out.flush()
-                                        }
-                                    }
-                                } finally {
-                                    webClientCount = (webClientCount - 1).coerceAtLeast(0)
                                 }
-                            } else if (reqLine.contains("GET /favicon.ico")) {
-                                val hdr = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
-                                out.write(hdr.toByteArray(Charsets.UTF_8))
-                                out.flush()
-                            } else {
-                                val html = """<!doctype html>
+                                else -> {
+                                    val html = """<!doctype html>
 <html lang="tr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mobile2TvGame Canli TV Yayini</title>
 <style>
   html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;
     display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#fff}
-  #streamImg{width:100vw;height:100vh;object-fit:contain;display:block}
+  #wrap{position:relative;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center}
+  #streamImg{width:100%;height:100%;object-fit:contain;display:block}
+  #cur{position:fixed;width:22px;height:22px;margin-left:-11px;margin-top:-11px;border:3px solid #ff3b30;
+    background:rgba(255,255,255,0.25);border-radius:50%;pointer-events:none;z-index:5;display:none;
+    box-shadow:0 0 8px rgba(0,0,0,0.8)}
   #fsBtn{position:fixed;top:12px;right:12px;background:rgba(20,30,55,0.85);color:#fff;
     border:1px solid #4da3ff;border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer;z-index:10}
 </style></head>
 <body>
   <button id="fsBtn" onclick="toggleFs()">⛶ Tam Ekran</button>
-  <img id="streamImg" src="/stream.mjpg" alt="Canli Yayin Bekleniyor...">
+  <div id="wrap">
+    <img id="streamImg" src="/stream.mjpg" alt="Canli Yayin Bekleniyor...">
+    <div id="cur"></div>
+  </div>
   <script>
     const btn = document.getElementById('fsBtn');
+    const img = document.getElementById('streamImg');
+    const cur = document.getElementById('cur');
     function toggleFs(){
       if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen().catch(()=>{});
@@ -836,17 +923,43 @@ object RelayMain {
     document.addEventListener('fullscreenchange', ()=>{
       btn.style.display = document.fullscreenElement ? 'none' : 'block';
     });
+    // Baglanti koparsa otomatik yeniden baglan
+    img.addEventListener('error', ()=>{
+      setTimeout(()=>{ img.src = '/stream.mjpg?t=' + Date.now(); }, 400);
+    });
+    // Imlec konumunu guncelle
+    async function pollCursor(){
+      try {
+        const r = await fetch('/cursor', {cache:'no-store'});
+        if (r.ok) {
+          const d = await r.json();
+          const rect = img.getBoundingClientRect();
+          const natW = img.naturalWidth || 16, natH = img.naturalHeight || 9;
+          const scale = Math.min(rect.width / natW, rect.height / natH);
+          const dispW = natW * scale, dispH = natH * scale;
+          const offX = rect.left + (rect.width - dispW) / 2;
+          const offY = rect.top + (rect.height - dispH) / 2;
+          cur.style.display = 'block';
+          cur.style.left = (offX + d.x * dispW) + 'px';
+          cur.style.top = (offY + d.y * dispH) + 'px';
+          cur.style.borderColor = (d.a === 0 || d.a === 2) ? '#2ecc71' : '#ff3b30';
+        }
+      } catch(e) {}
+      setTimeout(pollCursor, 65);
+    }
+    pollCursor();
   </script>
 </body></html>"""
-                                val body = html.toByteArray(Charsets.UTF_8)
-                                val hdr = "HTTP/1.1 200 OK\r\n" +
-                                        "Content-Type: text/html; charset=utf-8\r\n" +
-                                        "Content-Length: ${body.size}\r\n" +
-                                        "Cache-Control: no-store\r\n" +
-                                        "Connection: close\r\n\r\n"
-                                out.write(hdr.toByteArray(Charsets.UTF_8))
-                                out.write(body)
-                                out.flush()
+                                    val body = html.toByteArray(Charsets.UTF_8)
+                                    val hdr = "HTTP/1.1 200 OK\r\n" +
+                                            "Content-Type: text/html; charset=utf-8\r\n" +
+                                            "Content-Length: ${body.size}\r\n" +
+                                            "Cache-Control: no-store\r\n" +
+                                            "Connection: close\r\n\r\n"
+                                    out.write(hdr.toByteArray(Charsets.UTF_8))
+                                    out.write(body)
+                                    out.flush()
+                                }
                             }
                         } catch (_: Exception) {
                         } finally {
@@ -1087,9 +1200,10 @@ object RelayMain {
                     val shCopy = h.clone()
                     synchronized(previewCacheLock) {
                         latestSessionHdr = shCopy
+                        gopPackets.clear()
                     }
-                    if (previewActive) {
-                        previewQueue.offer(shCopy)
+                    for (q in previewClientQueues) {
+                        q.offer(shCopy)
                     }
                     val currentTv = tvOut
                     if (currentTv != null) {
@@ -1113,27 +1227,33 @@ object RelayMain {
                     inp.readFully(payload, 0, size)
                     total += 12 + size
 
-                    val isConfig = (flags and (1L shl 62)) != 0L
-                    val isKey = (flags and (1L shl 61)) != 0L
-                    if (isConfig || isKey || previewActive) {
-                        val pkt = ByteArray(12 + size)
-                        System.arraycopy(h, 0, pkt, 0, 12)
-                        System.arraycopy(payload, 0, pkt, 12, size)
-                        if (isConfig || isKey) {
-                            synchronized(previewCacheLock) {
-                                if (isConfig) latestConfigPacket = pkt
-                                if (isKey) latestKeyPacket = pkt
-                            }
+                    val (nalCfg, nalIdr) = inspectH264Payload(payload, size)
+                    val isConfig = nalCfg || ((flags and (1L shl 62)) != 0L)
+                    val isKey = (!isConfig) && (nalIdr || ((flags and (1L shl 61)) != 0L))
+
+                    val pkt = ByteArray(12 + size)
+                    System.arraycopy(h, 0, pkt, 0, 12)
+                    System.arraycopy(payload, 0, pkt, 12, size)
+
+                    synchronized(previewCacheLock) {
+                        if (isConfig) {
+                            latestConfigPacket = pkt
+                        } else if (isKey) {
+                            gopPackets.clear()
+                            gopPackets.add(pkt)
+                        } else if (gopPackets.size < 90) {
+                            gopPackets.add(pkt)
                         }
-                        if (previewActive) {
-                            if (!previewQueue.offer(pkt)) {
-                                if (isConfig || isKey) {
-                                    previewQueue.clear()
-                                    previewQueue.offer(pkt)
-                                } else {
-                                    previewQueue.poll()
-                                    previewQueue.offer(pkt)
-                                }
+                    }
+
+                    for (q in previewClientQueues) {
+                        if (!q.offer(pkt)) {
+                            if (isConfig || isKey) {
+                                q.clear()
+                                q.offer(pkt)
+                            } else {
+                                q.poll()
+                                q.offer(pkt)
                             }
                         }
                     }
@@ -1163,11 +1283,11 @@ object RelayMain {
             p("SONLANDI: $e")
         } finally {
             beacon = false
-            previewActive = false
+            previewClientQueues.clear()
             try { tvSocket?.close() } catch (_: Exception) {}
             try { sock?.close() } catch (_: Exception) {}
             try { audSock?.close() } catch (_: Exception) {}
-            try { serverProc?.destroy() } catch (_: Throwable) {}
+            try { serverProc?.destroy() } catch (_: Exception) {}
             try { File(TMP_JAR_PATH).delete() } catch (_: Throwable) {}
         }
         p("BITTI")
