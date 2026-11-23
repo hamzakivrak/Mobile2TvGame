@@ -170,6 +170,16 @@
         </div>
       </div>
       <div class="s-row" style="flex-wrap:wrap;gap:8px">
+        <label for="selQuality">Akicilik / Kalite (FPS ve Bit Hizi):</label>
+        <select id="selQuality">
+          <option value="auto">Otomatik (cozunurluge gore)</option>
+          <option value="30-2500">Cok Hafif: 30 FPS, 2.5 Mbps (en az isinma)</option>
+          <option value="30-4000">Hafif: 30 FPS, 4 Mbps</option>
+          <option value="60-6000">Dengeli: 60 FPS, 6 Mbps</option>
+          <option value="60-10000">Yuksek: 60 FPS, 10 Mbps</option>
+        </select>
+      </div>
+      <div class="s-row" style="flex-wrap:wrap;gap:8px">
         <label for="inpStartApp">Yayinla Birlikte Acilacak Paket:</label>
         <input id="inpStartApp" type="text" value="com.android.chrome">
         <label for="inpVersion" style="flex:0;white-space:nowrap">scrcpy surumu:</label>
@@ -435,6 +445,17 @@ try {
 function saveCfg(){
   try { localStorage.setItem('m2t_cfg_v8', JSON.stringify(CFG)); } catch(e) {}
 }
+
+/* Yayin kalitesi (FPS-kbps): relay'e bir sonraki yayin baslatmada iletilir. 'auto' = cozunurluge gore. */
+function pushQuality(){
+  try {
+    if (!(window.Android && Android.setQuality)) return;
+    const q = String(CFG.quality || 'auto');
+    const m = q.match(/^(\d+)-(\d+)$/);
+    Android.setQuality(m ? parseInt(m[1], 10) : 0, m ? parseInt(m[2], 10) : 0);
+  } catch(e) {}
+}
+pushQuality();
 
 /* ============ HIZLI KISAYOL, YAYIN & SHIZUKU FONKSIYONLARI ============ */
 const streamBtn = document.getElementById('streamBtn');
@@ -2085,6 +2106,9 @@ document.getElementById('pre720Btn').addEventListener('click', ()=>{ inpDisplay.
 document.getElementById('pre900Btn').addEventListener('click', ()=>{ inpDisplay.value = '1600x900/280'; CFG.displaySpec = inpDisplay.value; saveCfg(); });
 document.getElementById('pre1080Btn').addEventListener('click', ()=>{ inpDisplay.value = '1920x1080/360'; CFG.displaySpec = inpDisplay.value; saveCfg(); });
 
+const selQuality = document.getElementById('selQuality');
+selQuality.addEventListener('change', ()=>{ CFG.quality = selQuality.value; saveCfg(); pushQuality(); });
+
 document.getElementById('toggleLogBtn').addEventListener('click', ()=>{
   streamLogBox.style.display = (streamLogBox.style.display === 'block') ? 'none' : 'block';
   refreshStreamStateUI();
@@ -2099,7 +2123,9 @@ document.getElementById('btnStartStream').addEventListener('click', ()=>{
   CFG.displaySpec = inpDisplay.value.trim() || '1920x1080/360';
   CFG.startAppPkg = inpStartApp.value.trim() || 'com.android.chrome';
   CFG.scrcpyVer = inpVersion.value.trim() || '5.0.1';
+  CFG.quality = selQuality.value;
   saveCfg();
+  pushQuality();
   streamLogBox.style.display = 'block';
   try {
     if (window.Android && Android.startStream) {
@@ -2287,6 +2313,7 @@ btnDeleteAppProfile.addEventListener('click', () => {
 
 function syncSettingsUI(){
   inpDisplay.value = CFG.displaySpec || '1920x1080/360';
+  selQuality.value = CFG.quality || 'auto';
   inpStartApp.value = CFG.startAppPkg || 'com.android.chrome';
   inpVersion.value = CFG.scrcpyVer || '5.0.1';
   selGameAutoMode.value = CFG.gameAutoMode || 'ayna';

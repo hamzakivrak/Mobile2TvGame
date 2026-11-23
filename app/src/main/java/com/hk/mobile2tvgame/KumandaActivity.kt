@@ -123,6 +123,13 @@ class KumandaActivity : Activity(), SensorEventListener {
         @Volatile
         private var lastScrcpyVer: String = "5.0.1"
 
+        // Ayarlardan gelen kalite (0 = otomatik). startStream'de relay'e iletilir.
+        @Volatile
+        private var qualityFps: Int = 0
+
+        @Volatile
+        private var qualityKbps: Int = 0
+
         @Volatile
         private var streamStatusText: String = "Hazir."
 
@@ -284,6 +291,13 @@ class KumandaActivity : Activity(), SensorEventListener {
             }
         }
 
+        /** fps / kbps = 0 ise otomatik. Bir sonraki yayin baslatmada gecerli olur. */
+        @JavascriptInterface
+        fun setQuality(fps: Int, kbps: Int) {
+            qualityFps = fps.coerceIn(0, 120)
+            qualityKbps = kbps.coerceIn(0, 30_000)
+        }
+
         @JavascriptInterface
         fun startStream(display: String, appPkg: String, version: String): String {
             try {
@@ -327,7 +341,7 @@ class KumandaActivity : Activity(), SensorEventListener {
                         // DIKKAT: sh -c icinde pkill -f RelayMain kullanma (kendi sh surecini oldurur!).
                         // Onceki surec RelayMain icinde 27185 QUIT komutuyla temizce kapatilir.
                         val sh = "export CLASSPATH='$apk'; exec /system/bin/app_process / " +
-                                "com.hk.mobile2tvgame.RelayMain '$apk' '$v' '$a' '$d' 27183 2>&1"
+                                "com.hk.mobile2tvgame.RelayMain '$apk' '$v' '$a' '$d' 27183 $qualityFps $qualityKbps 2>&1"
                         val p = m.invoke(null, arrayOf("sh", "-c", sh), null, null) as Process
                         streamProc = p
                         pushStateToWeb()

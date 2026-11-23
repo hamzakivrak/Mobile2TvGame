@@ -1204,6 +1204,9 @@ object RelayMain {
             val startApp = args[2].trim()
             val display = args[3]
             val port = args[4].toInt()
+            // Istege bagli kalite ayari (ayarlardan): 0 = otomatik (cozunurluge gore)
+            val qualityFps = (args.getOrNull(5)?.toIntOrNull() ?: 0).coerceIn(0, 120)
+            val qualityKbps = (args.getOrNull(6)?.toIntOrNull() ?: 0).coerceIn(0, 30_000)
             if (startApp.isNotEmpty()) {
                 pendingLaunchTarget = startApp
             }
@@ -1228,16 +1231,20 @@ object RelayMain {
             }
 
             val maxDim = maxOf(vw, vh)
-            val bitRate = when {
+            val autoBitRate = when {
                 maxDim <= 1366 -> 4_000_000
                 maxDim <= 1680 -> 6_500_000
                 else -> 10_000_000
             }
-            val maxFps = when {
+            val autoMaxFps = when {
                 maxDim <= 1366 -> 45
                 maxDim <= 1680 -> 50
                 else -> 60
             }
+            val bitRate = if (qualityKbps >= 500) qualityKbps * 1000 else autoBitRate
+            val maxFps = if (qualityFps >= 15) qualityFps else autoMaxFps
+            p("Kalite: ${maxFps} FPS, ${bitRate / 1000} kbps" +
+                if (qualityFps >= 15 || qualityKbps >= 500) " (ayarlardan)" else " (otomatik)")
 
             p("Sanal ekran baslatiliyor ($display)...")
             val scid = "%08x".format(Random.nextInt(1, 0x7fffffff))
