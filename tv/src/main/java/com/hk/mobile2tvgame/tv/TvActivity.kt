@@ -51,10 +51,15 @@ class TvActivity : Activity(), SurfaceHolder.Callback {
 
     private var worker: Thread? = null
     private var mcLock: WifiManager.MulticastLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // TV'nin goruntu "iyilestirme" islemlerini (gecikme ekleyen) kapat; Oyun Modu / ALLM varsa devreye girer.
+        if (Build.VERSION.SDK_INT >= 30) {
+            try { window.setPreferMinimalPostProcessing(true) } catch (_: Exception) {}
+        }
         rootLayout = FrameLayout(this)
         rootLayout.setBackgroundColor(Color.BLACK)
         surfaceView = SurfaceView(this)
@@ -77,10 +82,24 @@ class TvActivity : Activity(), SurfaceHolder.Callback {
             mcLock = wm.createMulticastLock("m2t").apply { setReferenceCounted(false); acquire() }
         } catch (_: Exception) {
         }
+
+        // Wi-Fi guc tasarrufu paketleri geciktirip periyodik donma yapar; dusuk gecikme modunu zorla.
+        try {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val mode = if (Build.VERSION.SDK_INT >= 29) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifiLock = wm.createWifiLock(mode, "m2t-wifi").apply { setReferenceCounted(false); acquire() }
+        } catch (_: Exception) {
+        }
     }
 
     override fun onDestroy() {
         try { mcLock?.release() } catch (_: Exception) {}
+        try { wifiLock?.release() } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -150,7 +169,7 @@ class TvActivity : Activity(), SurfaceHolder.Callback {
                 status("Baglaniliyor: ${target.first}:${target.second}")
                 Socket().use { s ->
                     s.tcpNoDelay = true
-                    s.receiveBufferSize = 256 * 1024
+                    s.receiveBufferSize = 128 * 1024
                     s.connect(InetSocketAddress(target.first, target.second), 5000)
                     status("Baglandi, yayin bekleniyor...")
                     streamActive = true
@@ -226,9 +245,22 @@ class TvActivity : Activity(), SurfaceHolder.Callback {
                     asock.tcpNoDelay = true
                     val inp = DataInputStream(BufferedInputStream(asock.getInputStream(), 16384))
                     val pcm = ByteArray(4096)
+                    val skipBuf = ByteArray(4096)
+                    // 48 kHz * 2 kanal * 2 bayt = 192000 B/sn; 200 ms ~ 38400 bayt
+                    val maxBacklog = sampleRate * 4 / 5
                     while (running && streamActive) {
                         inp.readFully(pcm, 0, pcm.size)
                         track.write(pcm, 0, pcm.size)
+                        // Ses TCP'de birikip goruntuden geri kalirsa fazlasini at (100 ms birakir); ornek hizasi korunur.
+                        val backlog = inp.available()
+                        if (backlog > maxBacklog) {
+                            var toSkip = (backlog - maxBacklog / 2) and 3.inv()
+                            while (toSkip > 0) {
+                                val n = minOf(toSkip, skipBuf.size)
+                                inp.readFully(skipBuf, 0, n)
+                                toSkip -= n
+                            }
+                        }
                     }
                 }
             } catch (_: Exception) {

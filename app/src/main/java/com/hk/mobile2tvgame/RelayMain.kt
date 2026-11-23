@@ -29,8 +29,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.ZipFile
 import kotlin.concurrent.thread
+import kotlin.concurrent.withLock
 import kotlin.random.Random
 
 object RelayMain {
@@ -42,6 +44,21 @@ object RelayMain {
     private const val LOCAL_VIDEO_PORT = 27188
     private const val WEB_HTTP_PORT = 8080
     private const val TMP_JAR_PATH = "/data/local/tmp/m2t-scrcpy-server.jar"
+
+    // TV'ye giden akis: paket turleri ve gecikme sinirlari
+    private const val KIND_P = 0      // normal (P) kare: kuyruk dolarsa atilir
+    private const val KIND_KEY = 1    // keyframe (IDR): her zaman gonderilir
+    private const val KIND_CFG = 2    // oturum basligi / SPS-PPS: her zaman gonderilir
+
+    // Uygulama kuyrugunda bekleyen canli video bu degeri asarsa, sonraki keyframe'e kadar kare atilir.
+    // 128 KB ~ 10 Mbps'te yaklasik 100 ms. Donma/gecikme dengesini buradan ayarlayabilirsiniz.
+    private const val TV_MAX_QUEUED_BYTES = 128 * 1024
+
+    // Keyframe geldiginde kuyrukta bundan fazla bekleyen P-kare varsa hepsi silinir (aninda gecikme sifirlanir).
+    private const val TV_TRIM_BYTES = 64 * 1024
+
+    // Linux bu degeri 2 katina cikarir; eski 256 KB (=512 KB, ~400 ms gecikme) cok buyuktu.
+    private const val TV_SEND_BUFFER = 64 * 1024
 
     @Volatile
     private var displayId = -1
@@ -95,8 +112,7 @@ object RelayMain {
     private var tvSocket: Socket? = null
 
     @Volatile
-    private var tvOut: OutputStream? = null
-    private val tvWriteLock = Any()
+    private var tvSender: TvSender? = null
 
     // Her onizleme istemcisi (📺 Ekran ve Web Decoder) icin AYRI kuyruk:
     // boylece istemciler birbirinin H.264 paketlerini calmaz ve goruntu asla bozulmaz!
@@ -175,6 +191,129 @@ object RelayMain {
         System.exit(0)
     }
 
+    /**
+     * TV'ye giden video icin AYRI yazma kuyrugu ve iş parçacığı.
+     *
+     * Eskiden scrcpy'yi okuyan dongu dogrudan TV soketine yaziyordu. Wi-Fi bir an takilinca
+     * yazma bloklaniyor, scrcpy okunamiyor, sonra kareler birikmis halde hizla akiyordu:
+     * donma + ardindan "hizlandirilmis" goruntu + kalici gecikme.
+     *
+     * Simdi okuma dongusu hic beklemez (offer() hemen doner). TV yetismezse kuyruk dolar,
+     * yeni P-kareler bir sonraki keyframe'e kadar atilir. Keyframe gelince kuyrukta kalan
+     * eski P-kareler de silinir; goruntu temiz bicimde guncele atlar.
+     */
+    private class TvSender(private val sock: Socket, private val out: OutputStream) {
+        private class Item(val bytes: ByteArray, val kind: Int, val counted: Boolean)
+
+        private val lock = ReentrantLock()
+        private val notEmpty = lock.newCondition()
+        private val q = java.util.ArrayDeque<Item>()
+        private var queuedBytes = 0   // sadece canli (counted) paketler
+        private var waitKey = false
+        private var waitKeySince = 0L
+        private var closed = false
+        private var dropped = 0L
+
+        fun start() {
+            thread(isDaemon = true, name = "tv-sender") { loop() }
+        }
+
+        /** Canli akistan gelen paket. Asla bloklamaz. */
+        fun offer(pkt: ByteArray, kind: Int) = add(pkt, kind, true)
+
+        /** Yeni baglanan TV'ye onceki GOP'u tekrar gonderirken kullanilir; kuyruk limitine sayilmaz. */
+        fun offerReplay(pkt: ByteArray, kind: Int) = add(pkt, kind, false)
+
+        fun queuedKb(): Int = lock.withLock { queuedBytes / 1024 }
+
+        fun droppedCount(): Long = lock.withLock { dropped }
+
+        fun close() {
+            lock.withLock {
+                closed = true
+                q.clear()
+                queuedBytes = 0
+                notEmpty.signalAll()
+            }
+            try { sock.close() } catch (_: Exception) {}
+        }
+
+        private fun add(pkt: ByteArray, kind: Int, counted: Boolean) {
+            lock.withLock {
+                if (closed) return
+                if (counted) {
+                    if (kind == KIND_P) {
+                        if (waitKey) {
+                            // Guvenlik agi: keyframe 2 sn icinde gelmezse akisi dondurma, kareleri yine ilet.
+                            if (System.currentTimeMillis() - waitKeySince > 2000) {
+                                waitKey = false
+                            } else {
+                                dropped++
+                                return
+                            }
+                        }
+                        if (queuedBytes > TV_MAX_QUEUED_BYTES) {
+                            waitKey = true
+                            waitKeySince = System.currentTimeMillis()
+                            dropped++
+                            RelayMain.p("[tv] kuyruk doldu (${queuedBytes / 1024} KB): keyframe'e kadar kare atiliyor")
+                            return
+                        }
+                    } else if (kind == KIND_KEY) {
+                        waitKey = false
+                        if (queuedBytes > TV_TRIM_BYTES) trimQueuedPFrames()
+                    }
+                }
+                q.addLast(Item(pkt, kind, counted))
+                if (counted) queuedBytes += pkt.size
+                notEmpty.signal()
+            }
+        }
+
+        // Cagiran lock'u tutuyor. Yeni keyframe geldigi icin eski P-kareler artik gereksiz.
+        private fun trimQueuedPFrames() {
+            val iter = q.iterator()
+            while (iter.hasNext()) {
+                val item = iter.next()
+                if (item.kind == KIND_P) {
+                    iter.remove()
+                    if (item.counted) queuedBytes -= item.bytes.size
+                    dropped++
+                }
+            }
+        }
+
+        private fun loop() {
+            try {
+                while (true) {
+                    val item = lock.withLock {
+                        while (q.isEmpty() && !closed) notEmpty.await()
+                        if (closed) null else q.removeFirst()
+                    } ?: break
+                    out.write(item.bytes)
+                    out.flush()
+                    if (item.counted) lock.withLock { queuedBytes -= item.bytes.size }
+                }
+            } catch (_: Exception) {
+            } finally {
+                val wasActive = lock.withLock {
+                    val a = !closed
+                    closed = true
+                    q.clear()
+                    queuedBytes = 0
+                    a
+                }
+                try { sock.close() } catch (_: Exception) {}
+                // Yerine yeni bir TV gectiyse (close() ile kapatildiysa) bayrak/isaretleri bozma.
+                if (wasActive && RelayMain.tvSender === this) {
+                    RelayMain.tvSender = null
+                    RelayMain.beacon = true
+                    RelayMain.p("TV baglantisi kesildi, TV bekleniyor...")
+                }
+            }
+        }
+    }
+
     private fun startTvVideoServer(port: Int) {
         thread(isDaemon = true) {
             try {
@@ -186,29 +325,25 @@ object RelayMain {
                     beacon = false
                     allowedTvIp = tv.inetAddress.hostAddress
                     tv.tcpNoDelay = true
-                    tv.sendBufferSize = 256 * 1024
+                    tv.sendBufferSize = TV_SEND_BUFFER
                     p("TV baglandi: ${tv.inetAddress.hostAddress}")
+                    // Once eski gondericiyi kapat ki kendi kapanisi 'TV koptu' sanilmasin.
+                    tvSender?.close()
                     try { tvSocket?.close() } catch (_: Exception) {}
                     tvSocket = tv
-                    val out = BufferedOutputStream(tv.getOutputStream(), 65536)
-                    synchronized(tvWriteLock) {
-                        try {
-                            synchronized(previewCacheLock) {
-                                initialHdr69?.let { out.write(it) }
-                                latestSessionHdr?.let { out.write(it) }
-                                latestConfigPacket?.let { out.write(it) }
-                                for (pkt in gopPackets) {
-                                    out.write(pkt)
-                                }
-                            }
-                            out.flush()
-                            tvOut = out
-                        } catch (_: Exception) {
-                            tvOut = null
-                            beacon = true
-                            try { tv.close() } catch (_: Exception) {}
+                    val sender = TvSender(tv, BufferedOutputStream(tv.getOutputStream(), 65536))
+                    // Onbellekteki GOP'u kuyruga koy ve kaydi AYNI kilit altinda yap:
+                    // ana dongu de ayni kilitle ekledigi icin hicbir paket kacmaz ya da cift gitmez.
+                    synchronized(previewCacheLock) {
+                        initialHdr69?.let { sender.offerReplay(it, KIND_CFG) }
+                        latestSessionHdr?.let { sender.offerReplay(it, KIND_CFG) }
+                        latestConfigPacket?.let { sender.offerReplay(it, KIND_CFG) }
+                        gopPackets.forEachIndexed { idx, pkt ->
+                            sender.offerReplay(pkt, if (idx == 0) KIND_KEY else KIND_P)
                         }
+                        tvSender = sender
                     }
+                    sender.start()
                 }
             } catch (e: Exception) {
                 p("TV sunucu hatasi (port $port): $e")
@@ -1245,22 +1380,10 @@ object RelayMain {
                     synchronized(previewCacheLock) {
                         latestSessionHdr = shCopy
                         gopPackets.clear()
+                        tvSender?.offer(shCopy, KIND_CFG)
                     }
                     for (q in previewClientQueues) {
                         q.offer(shCopy)
-                    }
-                    val currentTv = tvOut
-                    if (currentTv != null) {
-                        synchronized(tvWriteLock) {
-                            try {
-                                currentTv.write(h)
-                                currentTv.flush()
-                            } catch (_: Exception) {
-                                tvOut = null
-                                beacon = true
-                                p("TV baglantisi kesildi, TV bekleniyor...")
-                            }
-                        }
                     }
                     total += 12
                 } else {
@@ -1290,6 +1413,9 @@ object RelayMain {
                         } else {
                             Unit
                         }
+                        // TV'ye bloklamadan ilet (kuyruga ekle). Ayni kilit altinda: yeni baglanan TV ile yaris olmaz.
+                        // IDR iceren paket (SPS/PPS ile birlikte gelse bile) keyframe sayilir.
+                        tvSender?.offer(pkt, if (nalIdr) KIND_KEY else if (isConfig) KIND_CFG else if (isKey) KIND_KEY else KIND_P)
                     }
 
                     for (q in previewClientQueues) {
@@ -1304,24 +1430,11 @@ object RelayMain {
                         }
                     }
 
-                    val currentTv = tvOut
-                    if (currentTv != null) {
-                        synchronized(tvWriteLock) {
-                            try {
-                                currentTv.write(h)
-                                currentTv.write(payload, 0, size)
-                                currentTv.flush()
-                            } catch (_: Exception) {
-                                tvOut = null
-                                beacon = true
-                                p("TV baglantisi kesildi, TV bekleniyor...")
-                            }
-                        }
-                    }
                 }
                 val now = System.currentTimeMillis()
                 if (now - last > 5000) {
-                    p("[akis] toplam ${total / 1024} KB (${vw}x${vh})")
+                    val ts = tvSender
+                    p("[akis] toplam ${total / 1024} KB (${vw}x${vh}) tv-kuyruk=${ts?.queuedKb() ?: 0}KB atilan-kare=${ts?.droppedCount() ?: 0}")
                     last = now
                 }
             }
@@ -1330,6 +1443,7 @@ object RelayMain {
         } finally {
             beacon = false
             previewClientQueues.clear()
+            try { tvSender?.close() } catch (_: Exception) {}
             try { tvSocket?.close() } catch (_: Exception) {}
             try { sock?.close() } catch (_: Exception) {}
             try { audSock?.close() } catch (_: Exception) {}

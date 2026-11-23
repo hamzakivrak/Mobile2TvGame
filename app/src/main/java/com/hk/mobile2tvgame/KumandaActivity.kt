@@ -19,6 +19,7 @@ import android.hardware.SensorManager
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -550,6 +551,8 @@ class KumandaActivity : Activity(), SensorEventListener {
                 or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
     }
 
+    private var wifiLock: WifiManager.WifiLock? = null
+
     @SuppressLint("SetJavaScriptEnabled", "SourceLockedOrientationActivity", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -559,6 +562,18 @@ class KumandaActivity : Activity(), SensorEventListener {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         )
         applyImmersiveUi()
+
+        // Wi-Fi guc tasarrufu paket gonderimini geciktirip periyodik donma yapar; yayin boyunca dusuk gecikme modu.
+        try {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val mode = if (Build.VERSION.SDK_INT >= 29) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifiLock = wm.createWifiLock(mode, "m2t-phone-wifi").apply { setReferenceCounted(false); acquire() }
+        } catch (_: Throwable) {}
 
         try { Shizuku.addRequestPermissionResultListener(permListener) } catch (_: Throwable) {}
 
@@ -864,6 +879,7 @@ class KumandaActivity : Activity(), SensorEventListener {
         previewEnabled = false
         try { Shizuku.removeRequestPermissionResultListener(permListener) } catch (_: Throwable) {}
         try { previewSocket?.close() } catch (_: Exception) {}
+        try { wifiLock?.release() } catch (_: Throwable) {}
         queue.offer("")
         super.onDestroy()
     }

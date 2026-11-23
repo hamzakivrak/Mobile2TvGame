@@ -15,3 +15,11 @@ Telefondaki oyunu sanal ekranda calistirip TV'ye aktarma projesi. **1. asama:** 
 ## Notlar
 - Surum alani (varsayilan 5.0.1) jar'in surumuyle birebir ayni olmali.
 - Baslik cozumleme scrcpy 3.x protokolune gore yazildi; 5.x'te farkliysa ham hex ciktisina bakariz.
+
+## Akicilik ayarlari (akici-yayin dali)
+- Telefon: TV'ye video gonderimi artik ayri bir kuyruktan yapilir. TV/Wi-Fi yetismezse kuyruk dolar, bir sonraki keyframe'e kadar P-kareler atilir (gecikme birikmez).
+  Ayarlar `RelayMain.kt` basinda: `TV_MAX_QUEUED_BYTES` (kucuk = daha dusuk gecikme, daha sik kisa donma), `TV_TRIM_BYTES`, `TV_SEND_BUFFER`.
+- Relay logunda `[tv] kuyruk doldu` mesaji ve `[akis] ... tv-kuyruk=..KB atilan-kare=..` satiri aginizin ne kadar yetersiz kaldigini gosterir.
+- TV: decoder kare dusurunce bozuk goruntu yerine keyframe bekler; ses birikirse 200 ms ustu atilir; Wi-Fi dusuk gecikme kilidi ve minimal post-processing acilir.
+- Telefon ve TV: Wi-Fi dusuk gecikme kilidi (`WIFI_MODE_FULL_LOW_LATENCY`).
+- Derleme: Actions sekmesinde "Build APK" -> Run workflow -> Branch: `akici-yayin`.
