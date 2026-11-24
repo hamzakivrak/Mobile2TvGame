@@ -26,6 +26,8 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
 import android.view.Gravity
+import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -84,6 +86,20 @@ class KumandaActivity : Activity(), SensorEventListener {
 
     @Volatile
     private var previewSocket: Socket? = null
+
+    // Fiziksel oyun kolu -> ekran tuslari eslemesi. Acikken pencere odaklanabilir olur ve kol olaylari
+    // oyuna degil bu uygulamaya gelir; JS tarafi bunlari sanal dokunuslara cevirir.
+    @Volatile
+    private var padMapEnabled = false
+
+    @Volatile
+    private var textFocusWanted = false
+
+    private var padHatX = 0
+    private var padHatY = 0
+    private var padLtDown = false
+    private var padRtDown = false
+    private var padLastAxes = FloatArray(4)
 
     private var previewNx = 0.0
     private var previewNy = 0.0
@@ -224,15 +240,49 @@ class KumandaActivity : Activity(), SensorEventListener {
 
         @JavascriptInterface
         fun setWindowFocusable(focusable: Boolean) {
+            textFocusWanted = focusable
             runOnUiThread {
                 if (!alive) return@runOnUiThread
-                if (focusable) {
+                // Kol esleme aciksa pencere hep odakli kalmali (yoksa kol olaylari gelmez).
+                if (focusable || padMapEnabled) {
                     window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
                 } else {
                     window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
                     applyImmersiveUi()
                 }
             }
+        }
+
+        @JavascriptInterface
+        fun setPadMapping(enabled: Boolean) {
+            padMapEnabled = enabled
+            runOnUiThread {
+                if (!alive) return@runOnUiThread
+                if (enabled || textFocusWanted) {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                } else {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                    applyImmersiveUi()
+                }
+                if (!enabled) resetPadState()
+            }
+        }
+
+        /** Bagli oyun kollarinin adlari (JSON dizi). */
+        @JavascriptInterface
+        fun padDevices(): String {
+            val arr = JSONArray()
+            try {
+                for (id in InputDevice.getDeviceIds()) {
+                    val d = InputDevice.getDevice(id) ?: continue
+                    if (d.isVirtual) continue
+                    val s = d.sources
+                    if ((s and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+                        (s and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+                    ) arr.put(d.name)
+                }
+            } catch (_: Throwable) {}
+            return arr.toString()
         }
 
         @JavascriptInterface
@@ -776,7 +826,111 @@ class KumandaActivity : Activity(), SensorEventListener {
 
     override fun onPause() {
         try { sensorManager?.unregisterListener(this) } catch (_: Exception) {}
+        resetPadState()
         super.onPause()
+    }
+
+    // ===== Fiziksel oyun kolu =====
+
+    private fun isPadEvent(source: Int, dev: InputDevice?): Boolean {
+        val s = dev?.sources ?: source
+        return (source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+            (source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
+            (s and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+    }
+
+    private fun padKeyName(code: Int): String {
+        val n = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_").removePrefix("BUTTON_")
+        val clean = n.filter { it.isLetterOrDigit() || it == '_' }
+        return if (clean.isNotEmpty() && clean.all { it.isDigit() }) "BTN$clean" else clean
+    }
+
+    private fun jsPad(js: String) {
+        if (!alive || !::web.isInitialized) return
+        try { web.evaluateJavascript(js, null) } catch (_: Exception) {}
+    }
+
+    private fun padKeyToJs(name: String, down: Boolean) {
+        if (name.isEmpty()) return
+        jsPad("if(window.onPadKey)window.onPadKey('$name',$down);")
+    }
+
+    private fun resetPadState() {
+        padHatX = 0; padHatY = 0; padLtDown = false; padRtDown = false
+        padLastAxes = FloatArray(4)
+        jsPad("if(window.padReleaseAll)window.padReleaseAll();")
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (padMapEnabled && isPadEvent(event.source, event.device)) {
+            val down = event.action == KeyEvent.ACTION_DOWN
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
+            if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
+                padKeyToJs(padKeyName(event.keyCode), down)
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        if (padMapEnabled &&
+            (ev.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK &&
+            ev.action == MotionEvent.ACTION_MOVE
+        ) {
+            handlePadMotion(ev)
+            return true
+        }
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
+    private fun handlePadMotion(ev: MotionEvent) {
+        // D-pad (hat) bazi kollarda tus degil eksen olarak gelir: tus olaylarina cevir.
+        val hx = Math.round(ev.getAxisValue(MotionEvent.AXIS_HAT_X))
+        val hy = Math.round(ev.getAxisValue(MotionEvent.AXIS_HAT_Y))
+        if (hx != padHatX) {
+            if (padHatX < 0) padKeyToJs("DPAD_LEFT", false)
+            if (padHatX > 0) padKeyToJs("DPAD_RIGHT", false)
+            if (hx < 0) padKeyToJs("DPAD_LEFT", true)
+            if (hx > 0) padKeyToJs("DPAD_RIGHT", true)
+            padHatX = hx
+        }
+        if (hy != padHatY) {
+            if (padHatY < 0) padKeyToJs("DPAD_UP", false)
+            if (padHatY > 0) padKeyToJs("DPAD_DOWN", false)
+            if (hy < 0) padKeyToJs("DPAD_UP", true)
+            if (hy > 0) padKeyToJs("DPAD_DOWN", true)
+            padHatY = hy
+        }
+
+        // Analog tetikler -> L2 / R2
+        val lt = maxOf(ev.getAxisValue(MotionEvent.AXIS_LTRIGGER), ev.getAxisValue(MotionEvent.AXIS_BRAKE))
+        val rt = maxOf(ev.getAxisValue(MotionEvent.AXIS_RTRIGGER), ev.getAxisValue(MotionEvent.AXIS_GAS))
+        val ltNow = lt > 0.5f
+        val rtNow = rt > 0.5f
+        if (ltNow != padLtDown) { padLtDown = ltNow; padKeyToJs("L2", ltNow) }
+        if (rtNow != padRtDown) { padRtDown = rtNow; padKeyToJs("R2", rtNow) }
+
+        // Cubuklar: sol = X/Y, sag = Z/RZ (bazi kollarda RX/RY)
+        val lx = ev.getAxisValue(MotionEvent.AXIS_X)
+        val ly = ev.getAxisValue(MotionEvent.AXIS_Y)
+        val z = ev.getAxisValue(MotionEvent.AXIS_Z)
+        val rx0 = ev.getAxisValue(MotionEvent.AXIS_RX)
+        val rx = if (Math.abs(z) >= Math.abs(rx0)) z else rx0
+        val rz = ev.getAxisValue(MotionEvent.AXIS_RZ)
+        val ry0 = ev.getAxisValue(MotionEvent.AXIS_RY)
+        val ry = if (Math.abs(rz) >= Math.abs(ry0)) rz else ry0
+        val cur = floatArrayOf(lx, ly, rx, ry)
+        var changed = false
+        for (i in 0..3) if (Math.abs(cur[i] - padLastAxes[i]) >= 0.03f) changed = true
+        if (changed) {
+            padLastAxes = cur
+            jsPad(
+                "if(window.onPadAxes)window.onPadAxes(" +
+                    "${"%.3f".format(java.util.Locale.US, lx)},${"%.3f".format(java.util.Locale.US, ly)}," +
+                    "${"%.3f".format(java.util.Locale.US, rx)},${"%.3f".format(java.util.Locale.US, ry)});"
+            )
+        }
     }
 
     override fun onSensorChanged(event: SensorEvent) {

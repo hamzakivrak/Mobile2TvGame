@@ -30,3 +30,11 @@ Telefondaki oyunu sanal ekranda calistirip TV'ye aktarma projesi. **1. asama:** 
 - Ses goruntuden once/sonra geliyorsa sol ustteki `-` / `+` dugmeleriyle "Ses gecikmesi" ayarlanir (50 ms adim, tarayicida hatirlanir).
 - Ses ham PCM (48 kHz, 2 kanal, 16 bit) olarak `/audio.pcm` adresinden akar; tarayici yetismezse ~300 ms ustu atilir, gecikme birikmez.
 - Tam ekranda araclar gizlenir; ses once baslatilmis olmalidir (tam ekran dugmesine basmak da sesi baslatir).
+
+## Fiziksel oyun kolu -> ekran tuslari (kol-eslesme dali)
+- Kolu (Bluetooth) telefona baglayin, KUMANDA modunda ust bardaki **🎮 Kol: KAPALI** dugmesine basip acin (veya Ayarlar -> "Fiziksel Kol -> Ekran Tuslari").
+- Acikken kolun tuslari oyuna degil uygulamaya gelir ve ekrandaki tus yerlerine dokunus olarak cevrilir; kolu tanimayan oyunlarda (orn. eFootball) calisir. Tus yerleri "📐 Tus Yeri" ile ayarlanir.
+- Varsayilan: A/B/X/Y, L1/R1/L2/R2, D-pad -> ayni adli ekran tuslari; sol analog -> joystick (Direksiyon/Oklar modunda sol-sag / yon tuslari).
+- Farkli esleme: Ayarlar'da hedef tusu secip "🎯 Esle"ye basin, sonra kolda tusa basin. Esleme oyun (paket) bazli saklanir.
+- "Son kol girdisi" satiri kolun hangi tusu gonderdigini gosterir (tani icin).
+- Not: Android uygulamalarin kol kimligini degistirmeye (Xbox taklidi) izin vermez; bu ozellik onun yerine dokunma eslemesi yapar.
