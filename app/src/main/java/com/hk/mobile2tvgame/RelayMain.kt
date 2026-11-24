@@ -60,6 +60,10 @@ object RelayMain {
     // Linux bu degeri 2 katina cikarir; eski 256 KB (=512 KB, ~400 ms gecikme) cok buyuktu.
     private const val TV_SEND_BUFFER = 64 * 1024
 
+    // Tarayici (web yayini) ses akisi: istemci basina en fazla ~300 ms (48 kHz * 2 kanal * 2 bayt * 0.3 sn) bekler;
+    // tarayici yetismezse en eski ses parcalari atilir, gecikme buyumez.
+    private const val WEB_AUDIO_MAX_BYTES = 57_600
+
     @Volatile
     private var displayId = -1
 
@@ -388,6 +392,52 @@ object RelayMain {
             }
         }
     }
+
+    /**
+     * Tarayici istemcisi icin ses kuyrugu. Ses okuma dongusu hic beklemez (offer() hemen doner);
+     * istemci yavaslarsa en eski parcalar atilir. Parcalar PCM cercevesi (4 bayt) sinirinda kalir.
+     */
+    private class WebAudioClient {
+        private val lock = ReentrantLock()
+        private val notEmpty = lock.newCondition()
+        private val q = java.util.ArrayDeque<ByteArray>()
+        private var bytes = 0
+        private var closed = false
+
+        fun offer(chunk: ByteArray) {
+            lock.withLock {
+                if (closed) return
+                q.addLast(chunk)
+                bytes += chunk.size
+                while (bytes > WEB_AUDIO_MAX_BYTES && q.size > 1) {
+                    bytes -= q.removeFirst().size
+                }
+                notEmpty.signal()
+            }
+        }
+
+        /** Sonraki ses parcasini bekler; kapandiysa null doner. */
+        fun take(): ByteArray? {
+            lock.withLock {
+                while (q.isEmpty() && !closed) notEmpty.await()
+                if (q.isEmpty()) return null
+                val c = q.removeFirst()
+                bytes -= c.size
+                return c
+            }
+        }
+
+        fun close() {
+            lock.withLock {
+                closed = true
+                q.clear()
+                bytes = 0
+                notEmpty.signalAll()
+            }
+        }
+    }
+
+    private val webAudioClients = java.util.concurrent.CopyOnWriteArrayList<WebAudioClient>()
 
     private fun startAudioServer() {
         thread(isDaemon = true) {
@@ -1054,6 +1104,30 @@ object RelayMain {
                                         webClientCount = (webClientCount - 1).coerceAtLeast(0)
                                     }
                                 }
+                                reqLine.contains("GET /audio.pcm") -> {
+                                    // Ham ses: 48000 Hz, 2 kanal, 16 bit isaretli, little-endian (scrcpy audio_codec=raw)
+                                    c.soTimeout = 0
+                                    val client = WebAudioClient()
+                                    webAudioClients.add(client)
+                                    try {
+                                        val hdr = "HTTP/1.1 200 OK\r\n" +
+                                                "Content-Type: application/octet-stream\r\n" +
+                                                "X-Audio-Format: s16le;48000;2\r\n" +
+                                                "Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n" +
+                                                "Pragma: no-cache\r\n" +
+                                                "Connection: close\r\n\r\n"
+                                        out.write(hdr.toByteArray(Charsets.UTF_8))
+                                        out.flush()
+                                        while (!c.isClosed) {
+                                            val chunk = client.take() ?: break
+                                            out.write(chunk)
+                                            out.flush()
+                                        }
+                                    } finally {
+                                        webAudioClients.remove(client)
+                                        client.close()
+                                    }
+                                }
                                 reqLine.contains("GET /cursor") -> {
                                     val body = "{\"x\":$lastCurX,\"y\":$lastCurY,\"a\":$lastCurAction}".toByteArray(Charsets.UTF_8)
                                     val hdr = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
@@ -1081,8 +1155,19 @@ object RelayMain {
     box-shadow:0 0 8px rgba(0,0,0,0.8)}
   #fsBtn{position:fixed;top:12px;right:12px;background:rgba(20,30,55,0.85);color:#fff;
     border:1px solid #4da3ff;border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer;z-index:10}
+  #audBar{position:fixed;top:12px;left:12px;display:flex;align-items:center;gap:6px;z-index:10;
+    background:rgba(20,30,55,0.85);border:1px solid #4da3ff;border-radius:8px;padding:6px 8px;font-size:14px}
+  #audBar button{background:transparent;color:#fff;border:1px solid #4da3ff;border-radius:6px;
+    padding:6px 10px;font-size:14px;cursor:pointer}
+  #audBar button:focus,#fsBtn:focus{outline:2px solid #fff}
 </style></head>
 <body>
+  <div id="audBar">
+    <button id="audBtn" onclick="toggleAudio()">🔇 Sesi Aç</button>
+    <button onclick="changeDelay(-0.05)" title="Ses görüntüden geri kalıyorsa azalt">−</button>
+    <span id="delTxt"></span>
+    <button onclick="changeDelay(0.05)" title="Ses görüntüden önde ise artır">+</button>
+  </div>
   <button id="fsBtn" onclick="toggleFs()">⛶ Tam Ekran</button>
   <div id="wrap">
     <img id="streamImg" src="/stream.mjpg" alt="Canli Yayin Bekleniyor...">
@@ -1100,7 +1185,10 @@ object RelayMain {
       }
     }
     document.addEventListener('fullscreenchange', ()=>{
-      btn.style.display = document.fullscreenElement ? 'none' : 'block';
+      const fsOn = !!document.fullscreenElement;
+      btn.style.display = fsOn ? 'none' : 'block';
+      const ab = document.getElementById('audBar');
+      if (ab) ab.style.display = fsOn ? 'none' : 'flex';
     });
     // Baglanti koparsa otomatik yeniden baglan
     img.addEventListener('error', ()=>{
@@ -1127,6 +1215,101 @@ object RelayMain {
       setTimeout(pollCursor, 65);
     }
     pollCursor();
+
+    // ---- Ses: telefondan gelen ham PCM (48 kHz, 2 kanal, 16 bit) Web Audio ile calinir ----
+    const audBtn = document.getElementById('audBtn');
+    const delTxt = document.getElementById('delTxt');
+    let actx = null, audioOn = false, audioTried = false, nextT = 0, aAbort = null;
+    let audDelay = 0.2;   // sn: sesi goruntuyle esitlemek icin bekletme payi
+    try {
+      const sv = parseFloat(localStorage.getItem('m2t_web_aud_delay'));
+      if (sv >= 0.05 && sv <= 2) audDelay = sv;
+    } catch(e) {}
+    function showDelay(){ delTxt.textContent = 'Ses gecikmesi ' + Math.round(audDelay * 1000) + ' ms'; }
+    function setAudioLabel(){ audBtn.textContent = audioOn ? '🔊 Ses Açık' : '🔇 Sesi Aç'; }
+    function changeDelay(d){
+      audDelay = Math.min(2, Math.max(0.05, audDelay + d));
+      try { localStorage.setItem('m2t_web_aud_delay', String(audDelay)); } catch(e) {}
+      nextT = 0;
+      showDelay();
+    }
+    function schedulePcm(u8, len){
+      const frames = len >> 2;
+      if (frames <= 0 || !actx) return;
+      const dv = new DataView(u8.buffer, u8.byteOffset, len);
+      const ab = actx.createBuffer(2, frames, 48000);
+      const L = ab.getChannelData(0), R = ab.getChannelData(1);
+      for (let i = 0; i < frames; i++) {
+        L[i] = dv.getInt16(i * 4, true) / 32768;
+        R[i] = dv.getInt16(i * 4 + 2, true) / 32768;
+      }
+      const now = actx.currentTime;
+      if (nextT < now + 0.01) nextT = now + audDelay;              // ilk parca / bosalma: tamponu yeniden kur
+      else if (nextT > now + audDelay + 0.35) return;               // fazla birikti: gecikme buyumesin, bu parcayi at
+      const src = actx.createBufferSource();
+      src.buffer = ab;
+      src.connect(actx.destination);
+      src.start(nextT);
+      nextT += ab.duration;
+    }
+    async function pumpAudio(){
+      while (audioOn) {
+        let left = new Uint8Array(0);
+        try {
+          aAbort = new AbortController();
+          const r = await fetch('/audio.pcm?t=' + Date.now(), {cache: 'no-store', signal: aAbort.signal});
+          const rd = r.body.getReader();
+          nextT = 0;
+          while (audioOn) {
+            const res = await rd.read();
+            if (res.done) break;
+            let buf = res.value;
+            if (left.length) {
+              const j = new Uint8Array(left.length + buf.length);
+              j.set(left, 0);
+              j.set(buf, left.length);
+              buf = j;
+            }
+            const usable = buf.length - (buf.length % 4);
+            left = buf.slice(usable);
+            if (usable > 0) schedulePcm(buf, usable);
+          }
+        } catch(e) {
+          if (!audioOn) return;
+        }
+        await new Promise(function(res){ setTimeout(res, 600); });
+      }
+    }
+    async function startAudio(){
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC || !window.fetch || !window.ReadableStream) {
+        audBtn.textContent = '⚠ Bu tarayıcı ses akışını desteklemiyor';
+        return;
+      }
+      if (!actx) actx = new AC();
+      try { await actx.resume(); } catch(e) {}
+      audioOn = true;
+      nextT = 0;
+      setAudioLabel();
+      pumpAudio();
+    }
+    function stopAudio(){
+      audioOn = false;
+      try { if (aAbort) aAbort.abort(); } catch(e) {}
+      setAudioLabel();
+    }
+    function toggleAudio(){
+      audioTried = true;
+      if (audioOn) stopAudio(); else startAudio();
+    }
+    // Tarayicilar ses icin kullanici etkilesimi ister: sayfadaki ilk tiklama/tus sesi kendiliginden acar.
+    function autoStartAudio(){
+      if (!audioTried) { audioTried = true; startAudio(); }
+    }
+    document.addEventListener('click', autoStartAudio);
+    document.addEventListener('keydown', autoStartAudio);
+    showDelay();
+    setAudioLabel();
   </script>
 </body></html>"""
                                     val body = html.toByteArray(Charsets.UTF_8)
@@ -1310,6 +1493,12 @@ object RelayMain {
                             aIn.readFully(pcmBuf, 0, size)
                             val isConfig = (flags and (1L shl 62)) != 0L
                             if (!isConfig) {
+                                // Once tarayici istemcilerine (bloklamaz), sonra TV'ye (bloklayabilir).
+                                val webClients = webAudioClients
+                                if (webClients.isNotEmpty()) {
+                                    val copy = pcmBuf.copyOf(size)
+                                    for (cl in webClients) cl.offer(copy)
+                                }
                                 val ao = audOut
                                 if (ao != null) {
                                     synchronized(audLock) {
