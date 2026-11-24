@@ -24,3 +24,9 @@ Telefondaki oyunu sanal ekranda calistirip TV'ye aktarma projesi. **1. asama:** 
 - Telefon ve TV: Wi-Fi dusuk gecikme kilidi (`WIFI_MODE_FULL_LOW_LATENCY`).
 - Derleme: Actions sekmesinde "Build APK" -> Run workflow -> Branch: `akici-yayin`.
 - Ayarlar -> "Akicilik / Kalite": FPS ve bit hizi secenekleri (Otomatik, 30 FPS 2.5/4 Mbps, 60 FPS 6/10 Mbps). Otomatik secimde eski davranis (cozunurluge gore) korunur. Degisiklik bir sonraki "Yayini Baslat"ta gecerli olur.
+
+## Tarayici (web) yayininda ses
+- `http://TELEFON_IP:8080` sayfasi artik sesi de calar. Sayfadaki ilk tiklama/tus sesi kendiliginden acar (tarayicilar ses icin kullanici etkilesimi ister); sol ustteki "Sesi Ac" ile acip kapatabilirsiniz.
+- Ses goruntuden once/sonra geliyorsa sol ustteki `-` / `+` dugmeleriyle "Ses gecikmesi" ayarlanir (50 ms adim, tarayicida hatirlanir).
+- Ses ham PCM (48 kHz, 2 kanal, 16 bit) olarak `/audio.pcm` adresinden akar; tarayici yetismezse ~300 ms ustu atilir, gecikme birikmez.
+- Tam ekranda araclar gizlenir; ses once baslatilmis olmalidir (tam ekran dugmesine basmak da sesi baslatir).
