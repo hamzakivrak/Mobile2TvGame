@@ -116,6 +116,7 @@
   <button id="modeBtn">Mod: IMLEC</button>
   <button id="previewBtn">📺 Ekran</button>
   <button id="ctrlStyleBtn" style="display:none">Sol: 🕹️ Joystick</button>
+  <button id="padBtn" style="display:none" title="Fiziksel oyun kolunu ekran tuslarina esle">🎮 Kol: KAPALI</button>
   <button id="editBtn" style="display:none">📐 Tus Yeri</button>
   <button id="editDragModeBtn" style="display:none" title="Tus Yeri ve Hedef Tasima Modu">🔗 Tus+Hedef</button>
   <button id="quickAddCtrlBtn" style="display:none" title="Tus Sayisini Artir (Yeni Tus Ekle)">➕ Tus Ekle</button>
@@ -289,6 +290,28 @@
       </div>
     </div>
 
+    <!-- 3b. Fiziksel Oyun Kolu -> Ekran Tuslari -->
+    <div class="s-card">
+      <h4><span>🕹️ Fiziksel Kol → Ekran Tuslari</span></h4>
+      <div class="s-sub">Oyun kolunu tanimayan oyunlarda (orn. eFootball) kolun tuslari, ekrandaki tus yerlerine dokunus olarak cevrilir. Sadece KUMANDA modunda calisir.</div>
+      <div class="s-row">
+        <label for="chkPadMap">Kol tuslarini ekran tuslarina cevir</label>
+        <input id="chkPadMap" type="checkbox">
+      </div>
+      <div id="padDevicesLbl" class="prof-badge">Bagli kol: kontrol ediliyor...</div>
+      <div id="padLastLbl" class="s-sub">Son kol girdisi: -</div>
+      <div class="s-row" style="flex-wrap:wrap;gap:6px">
+        <select id="selPadTarget" style="flex:1;min-width:130px"></select>
+        <button type="button" id="btnPadLearn" class="q-btn ok-btn" style="flex:0;min-width:auto;padding:6px 10px">🎯 Esle</button>
+        <button type="button" id="btnPadRefresh" class="q-btn" style="flex:0;min-width:auto;padding:6px 10px">🔄</button>
+      </div>
+      <div class="s-sub">Hedef tusu secin, "Esle"ye basin, sonra kolda istediginiz tusa basin (joystick icin cubugu itin).</div>
+      <div id="padBindList" class="ctrl-chip-list"></div>
+      <div class="quick-actions" style="margin-top:4px">
+        <button type="button" id="btnPadReset" class="q-btn warn-btn" style="font-size:11.5px;padding:6px 8px">↩ Varsayilan Eslemeye Don</button>
+      </div>
+    </div>
+
     <!-- 4. Kaydirma Cubuklari ve Hiz -->
     <div class="s-card">
       <h4>⇅ Kaydirma Cubuklari & Hiz</h4>
@@ -421,6 +444,7 @@ const DEFAULT_SETTINGS = {
   leftStyle: 'joystick',
   steerTarget: 'analog',
   tiltSens: 1.5,
+  padMap: false,              // Fiziksel kol tuslarini ekran tuslarina cevir
   appCardSize: 'lg',
   barX: null,                 // Suruklenebilir ust menu X konumu (null = ortali)
   barY: 4                     // Suruklenebilir ust menu Y konumu
@@ -822,6 +846,7 @@ const info = document.getElementById('info'), modeBtn = document.getElementById(
 const previewBtn = document.getElementById('previewBtn');
 const ctrlStyleBtn = document.getElementById('ctrlStyleBtn');
 const editBtn = document.getElementById('editBtn'), resetBtn = document.getElementById('resetBtn');
+const padBtn = document.getElementById('padBtn');
 const editDragModeBtn = document.getElementById('editDragModeBtn');
 const quickAddCtrlBtn = document.getElementById('quickAddCtrlBtn');
 const quickDelCtrlBtn = document.getElementById('quickDelCtrlBtn');
@@ -846,6 +871,7 @@ try {
 function setControllerMode(newMode){
   if (!MODES.includes(newMode)) return;
   finishScrollGesture();
+  if (typeof padReleaseAll === 'function') padReleaseAll();
   mode = newMode;
   try { localStorage.setItem('m2t_mode', mode); } catch(e) {}
   computeLayout();
@@ -1025,6 +1051,9 @@ function updateTopBar(){
     ctrlStyleBtn.style.display = 'inline-block';
     ctrlStyleBtn.textContent = LEFT_LABELS[CFG.leftStyle] || LEFT_LABELS.joystick;
     editBtn.style.display = 'inline-block';
+    padBtn.style.display = 'inline-block';
+    padBtn.textContent = CFG.padMap ? '🎮 Kol: ACIK' : '🎮 Kol: KAPALI';
+    padBtn.classList.toggle('on-btn', !!CFG.padMap);
     editDragModeBtn.style.display = editMode ? 'inline-block' : 'none';
     quickAddCtrlBtn.style.display = editMode ? 'inline-block' : 'none';
     quickDelCtrlBtn.style.display = (editMode && getActionCtrls().length > 0) ? 'inline-block' : 'none';
@@ -1038,6 +1067,7 @@ function updateTopBar(){
     selectedCtrl = null;
     ctrlStyleBtn.style.display = 'none';
     editBtn.style.display = 'none';
+    padBtn.style.display = 'none';
     editDragModeBtn.style.display = 'none';
     quickAddCtrlBtn.style.display = 'none';
     quickDelCtrlBtn.style.display = 'none';
@@ -2344,6 +2374,7 @@ function syncSettingsUI(){
   document.getElementById('lblBarSize').textContent = CFG.barSize + 'px';
   populateProfileAppSelect();
   updateProfileStatusAndChips();
+  refreshPadUI();
   refreshStreamStateUI();
 }
 
@@ -2409,6 +2440,315 @@ rngCurAccel.addEventListener('input', ()=> {
   lblCurAccel.textContent = (v <= 0 ? 'Kapali' : v.toFixed(1) + 'x');
 });
 rngBarSize.addEventListener('input', ()=> document.getElementById('lblBarSize').textContent = rngBarSize.value + 'px');
+
+/* ============ FIZIKSEL OYUN KOLU -> EKRAN TUSLARI ============ */
+// Kotlin kol olaylarini yakalar (onPadKey / onPadAxes), burada mevcut sanal dokunus hattina (active + send) cevrilir.
+const DEFAULT_PAD_BIND = {
+  'A':'A', 'B':'B', 'X':'X', 'Y':'Y',
+  'L1':'L1', 'R1':'R1', 'L2':'L2', 'R2':'R2',
+  'DPAD_LEFT':'Sol', 'DPAD_RIGHT':'Sag', 'DPAD_UP':'Ust', 'DPAD_DOWN':'Alt',
+  'LS':'@joy'
+};
+const PAD_DEAD = 0.18;
+let padBinds = {};
+try { padBinds = JSON.parse(localStorage.getItem('m2t_pad_bind_v1') || '{}') || {}; } catch(e) { padBinds = {}; }
+const padHeld = new Map();          // hedef -> Set(kaynak tus adlari)
+const padStickSrc = { LS: {x:0, y:0}, RS: {x:0, y:0} };
+let padLearn = null;                // {target}
+let padLearnTimer = null;
+
+function padProfileKey(){
+  return (currentApp && currentApp.pkg && currentApp.pkg !== '__default__') ? currentApp.pkg : '__global__';
+}
+function getPadBinds(){
+  return padBinds[padProfileKey()] || padBinds['__global__'] || DEFAULT_PAD_BIND;
+}
+function editablePadBinds(){
+  const k = padProfileKey();
+  if (!padBinds[k]) padBinds[k] = Object.assign({}, padBinds['__global__'] || DEFAULT_PAD_BIND);
+  return padBinds[k];
+}
+function savePadBinds(){
+  try { localStorage.setItem('m2t_pad_bind_v1', JSON.stringify(padBinds)); } catch(e) {}
+}
+
+function setPadMap(on){
+  CFG.padMap = !!on;
+  saveCfg();
+  try { if (window.Android && Android.setPadMapping) Android.setPadMapping(CFG.padMap); } catch(e) {}
+  if (!CFG.padMap) padReleaseAll();
+  try { updateTopBar(); } catch(e) {}
+  refreshPadUI();
+}
+
+function padFindCtrl(tgt){
+  if (tgt === '@joy') return getJoyCtrl();
+  return controls.find(c => (c.tip === 'dugme' || c.tip === 'yon_ok') && c.ad === tgt) || null;
+}
+
+function padPadActive(){
+  return CFG.padMap && mode === 'kumanda' && !editMode;
+}
+
+// Tek bir tusu (dugme / yon_ok) basili tut veya birak
+function padHoldCtrl(key, c, down){
+  if (!c) return;
+  if (down) {
+    if (active.has(key)) return;
+    const p = pid({identifier: key});
+    if (c.tip === 'yon_ok') {
+      const pos = getDpadTargetPos(c);
+      const st = {id: key, kind: 'yon_ok', c, p, nx: pos.x, ny: pos.y, ramping: false, rampTimer: null};
+      active.set(key, st);
+      if (pos.fromCenter) startSmoothAnalogHold(st, pos.cx, pos.cy, pos.x, pos.y);
+      else send(0, p, pos.x, pos.y);
+    } else {
+      active.set(key, {id: key, kind: 'dugme', c, p, nx: c.oyun.x, ny: c.oyun.y, ramping: false});
+      send(0, p, c.oyun.x, c.oyun.y);
+    }
+  } else {
+    const a = active.get(key);
+    if (!a) return;
+    if (a.rampTimer) { clearInterval(a.rampTimer); a.rampTimer = null; }
+    send(1, a.p, a.nx, a.ny);
+    active.delete(key);
+    idmap.delete(key);
+  }
+}
+
+// Sanal analog cubuk (sol joystick) -- vx,vy: -1..1
+function padAnalog(vx, vy){
+  const joy = getJoyCtrl();
+  const key = 'pad:@joy';
+  let a = active.get(key);
+  const mag = Math.hypot(vx, vy);
+  if (mag < 0.001) {
+    if (a) {
+      if (a.rampTimer) { clearInterval(a.rampTimer); a.rampTimer = null; }
+      send(1, a.p, a.nx, a.ny);
+      active.delete(key);
+      idmap.delete(key);
+    }
+    return;
+  }
+  let dx = vx, dy = vy;
+  if (mag > 1) { dx /= mag; dy /= mag; }
+  const tx = joy.oyun.x + (dx * joy.menzil) / TV_ORAN;
+  const ty = joy.oyun.y + dy * joy.menzil;
+  if (!a) {
+    const p = pid({identifier: key});
+    a = {id: key, kind: 'cubuk', c: joy, p, nx: tx, ny: ty, kx: dx, ky: dy, ramping: false, rampTimer: null};
+    active.set(key, a);
+    startSmoothAnalogHold(a, joy.oyun.x, joy.oyun.y, tx, ty);
+  } else {
+    a.kx = dx; a.ky = dy; a.nx = tx; a.ny = ty;
+    if (!a.ramping) send(2, a.p, tx, ty);
+  }
+}
+
+// Yon tuslari ayri dugme olan oyunlar (Asphalt gibi): esik asilinca ilgili yon tusuna bas
+function padDiscrete(vx, vy){
+  const want = { L: vx < -0.5, R: vx > 0.5, U: vy < -0.5, D: vy > 0.5 };
+  for (const d of ['L','R','U','D']) {
+    const c = getDpadCtrls().find(x => x.yon === d);
+    padHoldCtrl('pad:dir' + d, c, !!want[d] && !!c);
+  }
+}
+
+function padApplyMove(){
+  let sx = 0, sy = 0, best = 0;
+  const b = getPadBinds();
+  for (const name of ['LS', 'RS']) {
+    if (b[name] !== '@joy') continue;
+    const v = padStickSrc[name];
+    const m = Math.hypot(v.x, v.y);
+    if (m > best) { best = m; sx = v.x; sy = v.y; }
+  }
+  if (best < PAD_DEAD) { sx = 0; sy = 0; }
+
+  // D-pad yonleri (Sol/Sag/Ust/Alt hedeflerine bagli kol tuslari) tek bir yon vektoru olusturur
+  let hx = 0, hy = 0;
+  for (const tgt of padHeld.keys()) {
+    const c = padFindCtrl(tgt);
+    if (!c || c.tip !== 'yon_ok') continue;
+    if (c.yon === 'L') hx -= 1;
+    if (c.yon === 'R') hx += 1;
+    if (c.yon === 'U') hy -= 1;
+    if (c.yon === 'D') hy += 1;
+  }
+  if (hx || hy) {
+    const l = Math.hypot(hx, hy);
+    sx = hx / l; sy = hy / l;
+  }
+
+  if (CFG.leftStyle === 'wheel') sy = 0; // direksiyonda sadece sag/sol
+  const discrete = (CFG.steerTarget === 'buttons' && CFG.leftStyle !== 'joystick');
+  if (discrete) {
+    padAnalog(0, 0);
+    padDiscrete(sx, sy);
+  } else {
+    padDiscrete(0, 0);
+    padAnalog(sx, sy);
+  }
+  draw();
+}
+
+function padActuate(tgt, down){
+  const c = padFindCtrl(tgt);
+  if (!c) return;
+  if (c.tip === 'yon_ok') { padApplyMove(); return; }
+  if (c.tip === 'dugme') { padHoldCtrl('pad:' + tgt, c, down); draw(); }
+}
+
+window.onPadKey = function(name, down){
+  const lbl = document.getElementById('padLastLbl');
+  if (lbl && down) lbl.textContent = 'Son kol girdisi: ' + name;
+  if (padLearn) { if (down) padLearnCapture(name); return; }
+  if (!padPadActive()) return;
+  const tgt = getPadBinds()[name];
+  info.textContent = '🎮 ' + name + (tgt ? ' → ' + (tgt === '@joy' ? 'Joystick' : tgt) : ' (eslesmemis)');
+  if (!tgt || tgt === '@joy') return;
+  let set = padHeld.get(tgt);
+  if (down) {
+    if (!set) { set = new Set(); padHeld.set(tgt, set); }
+    const was = set.size;
+    set.add(name);
+    if (!was) padActuate(tgt, true);
+  } else {
+    if (!set) return;
+    set.delete(name);
+    if (!set.size) { padHeld.delete(tgt); padActuate(tgt, false); }
+  }
+};
+
+window.onPadAxes = function(lx, ly, rx, ry){
+  padStickSrc.LS.x = lx; padStickSrc.LS.y = ly;
+  padStickSrc.RS.x = rx; padStickSrc.RS.y = ry;
+  if (padLearn) {
+    if (Math.hypot(lx, ly) > 0.7) padLearnCapture('LS');
+    else if (Math.hypot(rx, ry) > 0.7) padLearnCapture('RS');
+    return;
+  }
+  if (!padPadActive()) return;
+  padApplyMove();
+};
+
+function padReleaseAll(){
+  padHeld.clear();
+  padStickSrc.LS.x = padStickSrc.LS.y = padStickSrc.RS.x = padStickSrc.RS.y = 0;
+  for (const key of Array.from(active.keys())) {
+    if (typeof key === 'string' && key.startsWith('pad:')) {
+      const a = active.get(key);
+      if (a) {
+        if (a.rampTimer) { clearInterval(a.rampTimer); a.rampTimer = null; }
+        send(1, a.p, a.nx, a.ny);
+      }
+      active.delete(key);
+      idmap.delete(key);
+    }
+  }
+}
+window.padReleaseAll = padReleaseAll;
+
+/* ---- Esleme (ogrenme) ---- */
+function padTargetLabel(t){ return t === '@joy' ? '🕹️ Joystick' : t; }
+
+function padLearnCapture(src){
+  if (!padLearn) return;
+  const tgt = padLearn.target;
+  const isStick = (src === 'LS' || src === 'RS');
+  if (tgt === '@joy' && !isStick) return;
+  if (tgt !== '@joy' && isStick) return;
+  const b = editablePadBinds();
+  for (const k of Object.keys(b)) if (b[k] === tgt) delete b[k];
+  b[src] = tgt;
+  savePadBinds();
+  padLearn = null;
+  if (padLearnTimer) { clearTimeout(padLearnTimer); padLearnTimer = null; }
+  const btn = document.getElementById('btnPadLearn');
+  if (btn) btn.textContent = '🎯 Esle';
+  info.textContent = '🎮 ' + src + ' → ' + padTargetLabel(tgt);
+  refreshPadUI();
+}
+
+function padLearnCancel(){
+  padLearn = null;
+  if (padLearnTimer) { clearTimeout(padLearnTimer); padLearnTimer = null; }
+  const btn = document.getElementById('btnPadLearn');
+  if (btn) btn.textContent = '🎯 Esle';
+}
+
+function refreshPadUI(){
+  const chk = document.getElementById('chkPadMap');
+  const sel = document.getElementById('selPadTarget');
+  const list = document.getElementById('padBindList');
+  const dev = document.getElementById('padDevicesLbl');
+  if (!chk || !sel || !list || !dev) return;
+  chk.checked = !!CFG.padMap;
+
+  let names = [];
+  try { if (window.Android && Android.padDevices) names = JSON.parse(Android.padDevices()); } catch(e) {}
+  dev.className = 'prof-badge' + (names.length ? ' saved' : '');
+  dev.textContent = names.length ? ('🎮 Bagli kol: ' + names.join(', ')) : '⚠️ Bagli oyun kolu bulunamadi (Bluetooth ile telefona baglayin).';
+
+  const prev = sel.value;
+  sel.textContent = '';
+  const opts = [['@joy', '🕹️ Sol Joystick']];
+  for (const c of controls) if (c.tip === 'dugme' || c.tip === 'yon_ok') opts.push([c.ad, (c.tip === 'yon_ok' ? '➕ Yon: ' : '🔘 Tus: ') + c.ad]);
+  for (const [v, t] of opts) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = t;
+    sel.appendChild(o);
+  }
+  if (opts.some(o => o[0] === prev)) sel.value = prev;
+
+  list.textContent = '';
+  const b = getPadBinds();
+  const keys = Object.keys(b).filter(k => padFindCtrl(b[k]));
+  if (!keys.length) {
+    const e = document.createElement('span');
+    e.className = 's-sub'; e.textContent = 'Henuz esleme yok.';
+    list.appendChild(e);
+  }
+  for (const k of keys) {
+    const chip = document.createElement('div');
+    chip.className = 'ctrl-chip';
+    const t = document.createElement('b');
+    t.textContent = k + ' → ' + padTargetLabel(b[k]);
+    chip.appendChild(t);
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'del-chip'; del.textContent = '✕';
+    del.addEventListener('click', () => {
+      const eb = editablePadBinds();
+      delete eb[k];
+      savePadBinds();
+      refreshPadUI();
+    });
+    chip.appendChild(del);
+    list.appendChild(chip);
+  }
+}
+
+document.getElementById('chkPadMap').addEventListener('change', (e) => setPadMap(e.target.checked));
+padBtn.addEventListener('click', () => setPadMap(!CFG.padMap));
+document.getElementById('btnPadRefresh').addEventListener('click', refreshPadUI);
+document.getElementById('btnPadLearn').addEventListener('click', () => {
+  if (padLearn) { padLearnCancel(); return; }
+  const tgt = document.getElementById('selPadTarget').value;
+  if (!tgt) return;
+  if (!CFG.padMap) setPadMap(true);
+  padLearn = { target: tgt };
+  const btn = document.getElementById('btnPadLearn');
+  btn.textContent = '⏳ Kolda tusa basin... (iptal)';
+  padLearnTimer = setTimeout(padLearnCancel, 10000);
+});
+document.getElementById('btnPadReset').addEventListener('click', () => {
+  delete padBinds[padProfileKey()];
+  savePadBinds();
+  padReleaseAll();
+  refreshPadUI();
+});
+try { if (window.Android && Android.setPadMapping) Android.setPadMapping(!!CFG.padMap); } catch(e) {}
 
 /* ---------- Cizim ---------- */
 function drawScrollbars(){
