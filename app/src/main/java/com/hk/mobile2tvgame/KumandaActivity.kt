@@ -858,6 +858,9 @@ class KumandaActivity : Activity(), SensorEventListener {
     private fun resetPadState() {
         padHatX = 0; padHatY = 0; padLtDown = false; padRtDown = false
         padLastAxes = FloatArray(4)
+        padPendingAxes = null
+        if (::web.isInitialized) web.removeCallbacks(padFlushRunnable)
+        padFlushScheduled = false
         jsPad("if(window.padReleaseAll)window.padReleaseAll();")
     }
 
@@ -924,13 +927,32 @@ class KumandaActivity : Activity(), SensorEventListener {
         var changed = false
         for (i in 0..3) if (Math.abs(cur[i] - padLastAxes[i]) >= 0.03f) changed = true
         if (changed) {
-            padLastAxes = cur
-            jsPad(
-                "if(window.onPadAxes)window.onPadAxes(" +
-                    "${"%.3f".format(java.util.Locale.US, lx)},${"%.3f".format(java.util.Locale.US, ly)}," +
-                    "${"%.3f".format(java.util.Locale.US, rx)},${"%.3f".format(java.util.Locale.US, ry)});"
-            )
+            padPendingAxes = cur
+            schedulePadAxesFlush()
         }
+    }
+
+    // Cubuk olaylari saniyede yuzlerce kez gelir; WebView JS'i ana is parcacaginda calistigi icin
+    // her biri icin evaluateJavascript cagirmak arayuzu tikayip "yanit vermiyor" (ANR) uyarisina yol acar.
+    // Bu yuzden en fazla ~60 Hz'de, her seferinde en guncel degerle gonderilir.
+    private var padPendingAxes: FloatArray? = null
+    private var padFlushScheduled = false
+    private val padFlushRunnable = Runnable {
+        padFlushScheduled = false
+        val c = padPendingAxes ?: return@Runnable
+        padPendingAxes = null
+        padLastAxes = c
+        jsPad(
+            "if(window.onPadAxes)window.onPadAxes(" +
+                "${"%.3f".format(java.util.Locale.US, c[0])},${"%.3f".format(java.util.Locale.US, c[1])}," +
+                "${"%.3f".format(java.util.Locale.US, c[2])},${"%.3f".format(java.util.Locale.US, c[3])});"
+        )
+    }
+
+    private fun schedulePadAxesFlush() {
+        if (padFlushScheduled || !::web.isInitialized) return
+        padFlushScheduled = true
+        web.postDelayed(padFlushRunnable, 16)
     }
 
     override fun onSensorChanged(event: SensorEvent) {
