@@ -2541,9 +2541,19 @@ function padAnalog(vx, vy){
     active.set(key, a);
     startSmoothAnalogHold(a, joy.oyun.x, joy.oyun.y, tx, ty);
   } else {
+    // Cok kucuk degisimleri atla: dokunus kuyrugunu ve TV tarafini gereksiz doldurmasin
+    if (Math.abs(dx - a.kx) < 0.015 && Math.abs(dy - a.ky) < 0.015) return;
     a.kx = dx; a.ky = dy; a.nx = tx; a.ny = ty;
     if (!a.ramping) send(2, a.p, tx, ty);
   }
+}
+
+// Cizimi birlestir: kol olaylari cok sik gelir, her biri icin tum tuvali yeniden cizme
+let padDrawQueued = false;
+function padRedraw(){
+  if (padDrawQueued) return;
+  padDrawQueued = true;
+  requestAnimationFrame(() => { padDrawQueued = false; draw(); });
 }
 
 // Yon tuslari ayri dugme olan oyunlar (Asphalt gibi): esik asilinca ilgili yon tusuna bas
@@ -2590,14 +2600,14 @@ function padApplyMove(){
     padDiscrete(0, 0);
     padAnalog(sx, sy);
   }
-  draw();
+  padRedraw();
 }
 
 function padActuate(tgt, down){
   const c = padFindCtrl(tgt);
   if (!c) return;
   if (c.tip === 'yon_ok') { padApplyMove(); return; }
-  if (c.tip === 'dugme') { padHoldCtrl('pad:' + tgt, c, down); draw(); }
+  if (c.tip === 'dugme') { padHoldCtrl('pad:' + tgt, c, down); padRedraw(); }
 }
 
 window.onPadKey = function(name, down){
