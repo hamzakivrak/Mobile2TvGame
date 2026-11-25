@@ -932,7 +932,8 @@ function send(a,id,nx,ny){
       sec = now;
       let q = -1;
       try { if (window.Android && Android.queueSize) q = Android.queueSize(); } catch(e) {}
-      const show = !!(typeof CFG !== 'undefined' && CFG.padMap);
+      // Kol bir kez acildiysa kapatilinca da gorunsun (donma kol kapaninca da suruyor mu gormek icin)
+      const show = !!(diag.everOn || (typeof CFG !== 'undefined' && CFG.padMap));
       el.style.display = show ? 'block' : 'none';
       if (show) {
         const bad = diag.lagMax > 200 || q > 50;
@@ -2507,6 +2508,7 @@ function savePadBinds(){
 
 function setPadMap(on){
   CFG.padMap = !!on;
+  if (on) diag.everOn = true;
   saveCfg();
   try { if (window.Android && Android.setPadMapping) Android.setPadMapping(CFG.padMap); } catch(e) {}
   if (!CFG.padMap) padReleaseAll();
