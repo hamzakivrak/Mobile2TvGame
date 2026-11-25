@@ -268,6 +268,10 @@ class KumandaActivity : Activity(), SensorEventListener {
             }
         }
 
+        /** Tani: bekleyen (henuz TV'ye yazilmamis) dokunus sayisi. */
+        @JavascriptInterface
+        fun queueSize(): Int = queue.size
+
         /** Bagli oyun kollarinin adlari (JSON dizi). */
         @JavascriptInterface
         fun padDevices(): String {

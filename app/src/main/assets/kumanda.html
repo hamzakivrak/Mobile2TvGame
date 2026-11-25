@@ -907,10 +907,43 @@ window.setOran = function(w, h) {
   }
 };
 
+const diag = { sent: 0, pad: 0, lagMax: 0, lagLast: 0 };
 function send(a,id,nx,ny){
   nx = Math.min(1, Math.max(0, nx)); ny = Math.min(1, Math.max(0, ny));
+  diag.sent++;
   try { if (window.Android) Android.touch(a,id,nx,ny); } catch(e) {}
 }
+
+// Tani gostergesi (sadece kol eslemesi acikken): donma aninda neyin tikandigini gosterir.
+// UI gecikme = JS zamanlayicisinin ne kadar geciktigi (ana is parcacigi tikaniyorsa buyur).
+(function(){
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;left:4px;bottom:4px;z-index:99999;font:10px monospace;color:#9fe3b0;background:rgba(0,0,0,.55);padding:2px 5px;border-radius:4px;pointer-events:none;display:none';
+  document.body.appendChild(el);
+  let last = performance.now(), sec = performance.now();
+  setInterval(() => {
+    const now = performance.now();
+    const lag = Math.max(0, now - last - 250);
+    last = now;
+    diag.lagLast = lag;
+    if (lag > diag.lagMax) diag.lagMax = lag;
+    if (now - sec >= 1000) {
+      const dt = (now - sec) / 1000;
+      sec = now;
+      let q = -1;
+      try { if (window.Android && Android.queueSize) q = Android.queueSize(); } catch(e) {}
+      const show = !!(typeof CFG !== 'undefined' && CFG.padMap);
+      el.style.display = show ? 'block' : 'none';
+      if (show) {
+        const bad = diag.lagMax > 200 || q > 50;
+        el.style.color = bad ? '#ff8a80' : '#9fe3b0';
+        el.textContent = 'kol/s ' + Math.round(diag.pad / dt) + ' · dokunus/s ' + Math.round(diag.sent / dt) +
+          ' · UI gecikme maks ' + Math.round(diag.lagMax) + 'ms · kuyruk ' + q;
+      }
+      diag.sent = 0; diag.pad = 0; diag.lagMax = 0;
+    }
+  }, 250);
+})();
 
 function isAnyModalOpen(){
   return (
@@ -2611,6 +2644,7 @@ function padActuate(tgt, down){
 }
 
 window.onPadKey = function(name, down){
+  diag.pad++;
   const lbl = document.getElementById('padLastLbl');
   if (lbl && down) lbl.textContent = 'Son kol girdisi: ' + name;
   if (padLearn) { if (down) padLearnCapture(name); return; }
@@ -2632,6 +2666,7 @@ window.onPadKey = function(name, down){
 };
 
 window.onPadAxes = function(lx, ly, rx, ry){
+  diag.pad++;
   padStickSrc.LS.x = lx; padStickSrc.LS.y = ly;
   padStickSrc.RS.x = rx; padStickSrc.RS.y = ry;
   if (padLearn) {
